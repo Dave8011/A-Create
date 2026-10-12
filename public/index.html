@@ -747,10 +747,17 @@
         <h2 class="card-title">🔐 Amazon SP-API EU / Global Configuration</h2>
         <p class="card-desc">Configure your Selling Partner API credentials for publishing A+ content to Amazon.</p>
 
-        <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; font-size: 12px; color: #10b981; display: flex; align-items: flex-start; gap: 10px; line-height: 1.5;">
+        <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; font-size: 12px; color: #10b981; display: flex; align-items: flex-start; gap: 10px; line-height: 1.5;">
           <span style="font-size: 16px;">🛡️</span>
           <div>
             <strong>Zero-Exposure Security Guarantee:</strong> All credentials (Client ID, Secret, Refresh Token, Seller ID) are managed strictly server-side in your protected <code>.env</code> file (file mode <code>0600</code>). Secrets are never returned over API endpoints or exposed in browser consoles.
+          </div>
+        </div>
+
+        <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 8px; padding: 10px 16px; margin-bottom: 20px; font-size: 12px; color: #60a5fa; display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 15px;">💡</span>
+          <div>
+            <strong>Server Restart Tip:</strong> If running via terminal, restart your local server (<code>Ctrl+C</code> then <code>npm start</code> or use <code>npm run dev</code> for auto-reload) so modified endpoints are reloaded into Node.js process memory.
           </div>
         </div>
 

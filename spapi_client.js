@@ -43,15 +43,24 @@ const KNOWN_MARKETPLACES = {
 
 const INDIA_MARKETPLACE_ID = 'A21TJRUUN4KGV';
 
+function cleanValue(val) {
+  if (!val || typeof val !== 'string') return '';
+  let str = val.trim();
+  if ((str.startsWith("'") && str.endsWith("'")) || (str.startsWith('"') && str.endsWith('"'))) {
+    str = str.slice(1, -1).trim();
+  }
+  return str;
+}
+
 class SpApiClient {
   constructor(config = {}) {
     // Support EU_* environment variables first, falling back to standard SP_API_* names
-    this.clientId = (config.clientId || process.env.EU_SELLING_PARTNER_APP_CLIENT_ID || process.env.SP_API_CLIENT_ID || '').trim();
-    this.clientSecret = (config.clientSecret || process.env.EU_SELLING_PARTNER_APP_CLIENT_SECRET || process.env.SP_API_CLIENT_SECRET || '').trim();
-    this.refreshToken = (config.refreshToken || process.env.EU_REFRESH_TOKEN || process.env.SP_API_REFRESH_TOKEN || '').trim();
-    this.sellerId = (config.sellerId || process.env.EU_SELLER_ID || process.env.SELLER_ID || '').trim();
-    this.awsRegion = (config.awsRegion || process.env.EU_AWS_REGION || process.env.AWS_REGION || 'eu-west-1').trim();
-    this.marketplaceId = (config.marketplaceId || process.env.EU_MARKETPLACE_ID || process.env.SP_API_MARKETPLACE_ID || INDIA_MARKETPLACE_ID).trim();
+    this.clientId = cleanValue(config.clientId || process.env.EU_SELLING_PARTNER_APP_CLIENT_ID || process.env.SP_API_CLIENT_ID);
+    this.clientSecret = cleanValue(config.clientSecret || process.env.EU_SELLING_PARTNER_APP_CLIENT_SECRET || process.env.SP_API_CLIENT_SECRET);
+    this.refreshToken = cleanValue(config.refreshToken || process.env.EU_REFRESH_TOKEN || process.env.SP_API_REFRESH_TOKEN);
+    this.sellerId = cleanValue(config.sellerId || process.env.EU_SELLER_ID || process.env.SELLER_ID);
+    this.awsRegion = cleanValue(config.awsRegion || process.env.EU_AWS_REGION || process.env.AWS_REGION || 'eu-west-1');
+    this.marketplaceId = cleanValue(config.marketplaceId || process.env.EU_MARKETPLACE_ID || process.env.SP_API_MARKETPLACE_ID || INDIA_MARKETPLACE_ID);
     
     this.endpoint = config.endpoint || REGION_BY_AWS_REGION[this.awsRegion.toLowerCase()] || REGIONS.eu;
     this.isSandbox = config.isSandbox !== undefined ? config.isSandbox : (process.env.SP_API_SANDBOX === 'true' || (process.env.SP_API_SANDBOX !== 'false' && !this.clientId));
@@ -61,15 +70,15 @@ class SpApiClient {
   }
 
   updateConfig(config = {}) {
-    if (config.clientId !== undefined) this.clientId = config.clientId.trim();
-    if (config.clientSecret !== undefined && config.clientSecret !== '') this.clientSecret = config.clientSecret.trim();
-    if (config.refreshToken !== undefined && config.refreshToken !== '') this.refreshToken = config.refreshToken.trim();
-    if (config.sellerId !== undefined) this.sellerId = config.sellerId.trim();
+    if (config.clientId !== undefined) this.clientId = cleanValue(config.clientId);
+    if (config.clientSecret !== undefined && config.clientSecret !== '') this.clientSecret = cleanValue(config.clientSecret);
+    if (config.refreshToken !== undefined && config.refreshToken !== '') this.refreshToken = cleanValue(config.refreshToken);
+    if (config.sellerId !== undefined) this.sellerId = cleanValue(config.sellerId);
     if (config.awsRegion !== undefined) {
-      this.awsRegion = config.awsRegion.trim();
+      this.awsRegion = cleanValue(config.awsRegion);
       this.endpoint = REGION_BY_AWS_REGION[this.awsRegion.toLowerCase()] || REGIONS.eu;
     }
-    if (config.marketplaceId !== undefined && config.marketplaceId !== '') this.marketplaceId = config.marketplaceId.trim();
+    if (config.marketplaceId !== undefined && config.marketplaceId !== '') this.marketplaceId = cleanValue(config.marketplaceId);
     if (config.endpoint !== undefined) this.endpoint = config.endpoint;
     if (config.isSandbox !== undefined) this.isSandbox = config.isSandbox;
     this.cachedToken = null;
@@ -90,7 +99,7 @@ class SpApiClient {
   }
 
   /**
-   * Fetch LWA (Login with Amazon) Access Token with caching
+   * Fetch LWA (Login with Amazon) Access Token with caching and multi-endpoint fallback
    */
   async getAccessToken() {
     if (this.isSandbox && !this.clientId) {
@@ -105,43 +114,73 @@ class SpApiClient {
       throw new Error('SP-API credentials missing. Please configure Client ID (EU_SELLING_PARTNER_APP_CLIENT_ID), Client Secret, and Refresh Token (EU_REFRESH_TOKEN) in Settings.');
     }
 
-    try {
-      // Primary LWA token endpoint: https://api.amazon.com/auth/o2/token
-      const lwaEndpoint = 'https://api.amazon.com/auth/o2/token';
-      const response = await axios.post(
-        lwaEndpoint,
-        new URLSearchParams({
-          grant_type: 'refresh_token',
-          client_id: this.clientId,
-          client_secret: this.clientSecret,
-          refresh_token: this.refreshToken
-        }).toString(),
-        {
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-          timeout: 10000
-        }
-      );
+    // Candidate Amazon LWA token endpoints (Primary global and regional EU fallback)
+    const lwaEndpoints = [
+      'https://api.amazon.com/auth/o2/token',
+      'https://api.amazon.co.uk/auth/o2/token'
+    ];
 
-      this.cachedToken = response.data.access_token;
-      this.tokenExpiresAt = Date.now() + (response.data.expires_in || 3600) * 1000;
-      return this.cachedToken;
-    } catch (err) {
-      // Security: never echo or log err.config (which contains client_secret and refresh_token in request body)
-      const errorDesc = err.response?.data?.error_description;
-      const errCode = err.response?.data?.error;
-      let msg = errorDesc ? `${errorDesc} (${errCode || 'OAuth Error'})` : (errCode || err.message);
-      if (err.response?.status) {
-        msg = `HTTP ${err.response.status}: ${msg}`;
+    let lastError = null;
+
+    for (const lwaEndpoint of lwaEndpoints) {
+      try {
+        const response = await axios.post(
+          lwaEndpoint,
+          new URLSearchParams({
+            grant_type: 'refresh_token',
+            client_id: this.clientId,
+            client_secret: this.clientSecret,
+            refresh_token: this.refreshToken
+          }).toString(),
+          {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+            timeout: 10000
+          }
+        );
+
+        this.cachedToken = response.data.access_token;
+        this.tokenExpiresAt = Date.now() + (response.data.expires_in || 3600) * 1000;
+        return this.cachedToken;
+      } catch (err) {
+        lastError = err;
+        // If Amazon LWA explicitly returns 400, 401, or 403 with an OAuth error, it reached the server;
+        // don't mask the error by trying another endpoint unless it was a 404 or network error
+        if (err.response && [400, 401, 403].includes(err.response.status)) {
+          break;
+        }
       }
-      throw new Error(`Amazon LWA Authentication failed: ${msg}`);
     }
+
+    // Security: never echo or log err.config (which contains client_secret and refresh_token in request body)
+    const errorDesc = lastError?.response?.data?.error_description;
+    const errCode = lastError?.response?.data?.error;
+    let msg = errorDesc ? `${errorDesc} (${errCode || 'OAuth Error'})` : (errCode || lastError?.message || 'Authentication failed');
+    if (lastError?.response?.status) {
+      msg = `HTTP ${lastError.response.status}: ${msg}`;
+    }
+    throw new Error(`Amazon LWA Authentication failed: ${msg}`);
   }
 
   /**
    * Test connection to Amazon SP-API
+   * Supports testing ad-hoc config without overwriting active credentials unless valid
    */
-  async testConnection() {
-    if (this.isSandbox && !this.clientId) {
+  async testConnection(customConfig = null) {
+    let clientToTest = this;
+    if (customConfig && typeof customConfig === 'object') {
+      const mergedConfig = {
+        clientId: cleanValue(customConfig.clientId) || this.clientId,
+        clientSecret: cleanValue(customConfig.clientSecret) || this.clientSecret,
+        refreshToken: cleanValue(customConfig.refreshToken) || this.refreshToken,
+        sellerId: cleanValue(customConfig.sellerId) || this.sellerId,
+        awsRegion: cleanValue(customConfig.awsRegion) || this.awsRegion,
+        marketplaceId: cleanValue(customConfig.marketplaceId) || this.marketplaceId,
+        isSandbox: customConfig.isSandbox !== undefined ? customConfig.isSandbox : this.isSandbox
+      };
+      clientToTest = new SpApiClient(mergedConfig);
+    }
+
+    if (clientToTest.isSandbox && !clientToTest.clientId) {
       return {
         success: true,
         mode: 'sandbox',
@@ -149,7 +188,13 @@ class SpApiClient {
       };
     }
 
-    await this.getAccessToken();
+    await clientToTest.getAccessToken();
+
+    // If ad-hoc config was passed and successfully authenticated, sync active client
+    if (customConfig && clientToTest !== this) {
+      this.updateConfig(customConfig);
+    }
+
     return {
       success: true,
       mode: 'live',

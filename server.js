@@ -249,7 +249,8 @@ app.post('/api/config', (req, res) => {
 
 app.post('/api/test-connection', async (req, res) => {
   try {
-    const result = await spapi.testConnection();
+    const customConfig = (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) ? req.body : null;
+    const result = await spapi.testConnection(customConfig);
     res.json(result);
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });

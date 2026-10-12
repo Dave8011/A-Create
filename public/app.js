@@ -1075,11 +1075,34 @@ function initSettings() {
     box.className = 'status-callout';
     box.textContent = 'Testing connection with Amazon LWA and SP-API EU endpoint...';
 
+    const clientIdInput = document.getElementById('cfgClientId') ? document.getElementById('cfgClientId').value.trim() : '';
+    const clientSecretInput = document.getElementById('cfgClientSecret') ? document.getElementById('cfgClientSecret').value.trim() : '';
+    const refreshTokenInput = document.getElementById('cfgRefreshToken') ? document.getElementById('cfgRefreshToken').value.trim() : '';
+    const sellerIdInput = document.getElementById('cfgSellerId') ? document.getElementById('cfgSellerId').value.trim() : '';
+    const awsRegionInput = document.getElementById('cfgAwsRegion') ? document.getElementById('cfgAwsRegion').value.trim() : 'eu-west-1';
+    const marketplaceInput = document.getElementById('cfgMarketplace') ? document.getElementById('cfgMarketplace').value.trim() : 'A21TJRUUN4KGV';
+    const isSandbox = document.getElementById('cfgSandboxMode') ? document.getElementById('cfgSandboxMode').checked : false;
+
+    const payload = {};
+    if (clientIdInput) payload.clientId = clientIdInput;
+    // Only pass secrets if user entered new values (not masked placeholder)
+    if (clientSecretInput && !clientSecretInput.startsWith('•')) payload.clientSecret = clientSecretInput;
+    if (refreshTokenInput && !refreshTokenInput.startsWith('•')) payload.refreshToken = refreshTokenInput;
+    if (sellerIdInput) payload.sellerId = sellerIdInput;
+    if (awsRegionInput) payload.awsRegion = awsRegionInput;
+    if (marketplaceInput) payload.marketplaceId = marketplaceInput;
+    payload.isSandbox = isSandbox;
+
     try {
-      const res = await fetch('/api/test-connection', { method: 'POST' });
+      const res = await fetch('/api/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
       const data = await res.json();
       if (data.success) {
         showCallout(`✅ ${data.message} (${data.mode.toUpperCase()} mode)`, 'success');
+        fetchConfig();
       } else {
         showCallout(`❌ Connection Failed: ${data.message}`, 'error');
       }
