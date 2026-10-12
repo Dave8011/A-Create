@@ -823,26 +823,6 @@ function renderDiscoveredTables(tables) {
 }
 
 function initSettings() {
-  // ⚡ 1-Click Auto-Fill Preset (PTFS & Amazon India)
-  const autoFillBtn = document.getElementById('autoFillPresetBtn');
-  if (autoFillBtn) {
-    autoFillBtn.addEventListener('click', () => {
-      document.getElementById('cfgDbAmazonTable').value = 'fry_amazon_india_data';
-      document.getElementById('cfgDbMarketplaceCol').value = 'marketplace';
-      document.getElementById('cfgDbMarketplaceVal').value = 'sf_amazon';
-      document.getElementById('cfgDbProductsTable').value = 'fry_products';
-      document.getElementById('cfgDbCategoryCol').value = 'product_classification';
-      document.getElementById('cfgDbCategoryVal').value = 'PTFS';
-      document.getElementById('cfgDbAmzJoinKey').value = 'product_id';
-      document.getElementById('cfgDbProdJoinKey').value = 'productid';
-
-      ensureOption('selDbAmazonTable', 'fry_amazon_india_data');
-      ensureOption('selDbProductsTable', 'fry_products');
-
-      showDbCallout('⚡ Auto-filled PTFS & Amazon India presets! Ready to test connection or fetch listings.', 'info');
-    });
-  }
-
   // OMS DB Settings Form Submit (Saves to .env)
   document.getElementById('dbSettingsForm').addEventListener('submit', async (e) => {
     e.preventDefault();
