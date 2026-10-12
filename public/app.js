@@ -87,6 +87,12 @@ function switchTab(tabId) {
 // 2. Fetch Listings & Render Audit Grid (650+ items)
 // ==========================================================================
 async function fetchListings() {
+  // If we already have the full catalog loaded in client state (e.g. 774 items), use client pagination
+  if (state.allListings && state.allListings.length > state.limit) {
+    paginateAndRenderClientListings();
+    return;
+  }
+
   try {
     const params = new URLSearchParams({
       page: state.currentPage,
@@ -99,9 +105,11 @@ async function fetchListings() {
     const data = await res.json();
 
     if (data && data.items && data.items.length > 0) {
-      state.allListings = data.items;
+      if (!state.allListings || state.allListings.length <= data.items.length) {
+        state.allListings = data.items;
+      }
       state.loadedItems = data.items;
-      try { localStorage.setItem('aplus_cached_listings', JSON.stringify(data.items)); } catch(e){}
+      try { localStorage.setItem('aplus_cached_listings', JSON.stringify(state.allListings)); } catch(e){}
       updateKpis(data.metrics);
       renderTable(data.items);
       renderPagination(data.totalCount, data.page, data.totalPages);
@@ -391,14 +399,22 @@ function initTableEvents() {
   document.getElementById('prevPageBtn').addEventListener('click', () => {
     if (state.currentPage > 1) {
       state.currentPage--;
-      fetchListings();
+      if (state.allListings && state.allListings.length > state.limit) {
+        paginateAndRenderClientListings();
+      } else {
+        fetchListings();
+      }
     }
   });
 
   document.getElementById('nextPageBtn').addEventListener('click', () => {
     if (state.currentPage < state.totalPages) {
       state.currentPage++;
-      fetchListings();
+      if (state.allListings && state.allListings.length > state.limit) {
+        paginateAndRenderClientListings();
+      } else {
+        fetchListings();
+      }
     }
   });
 
@@ -423,6 +439,25 @@ function initTableEvents() {
   document.getElementById('downloadCsvBtn').addEventListener('click', () => {
     window.location.href = '/api/download-sku-asin-template';
   });
+
+  // Clear loaded listings button
+  const clearBtn = document.getElementById('clearListingsBtn');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', async () => {
+      if (confirm('Clear all loaded listings from the matrix and reset to empty?')) {
+        state.allListings = [];
+        state.loadedItems = [];
+        state.selectedAsins.clear();
+        try { localStorage.removeItem('aplus_cached_listings'); } catch(e){}
+        await fetch('/api/clear-listings', { method: 'POST' }).catch(() => {});
+        renderTable([]);
+        renderPagination(0, 1, 1);
+        updateKpis({ total: 0, approved: 0, submitted: 0, rejected: 0, draft: 0, liveOnAmazon: 0 });
+        updatePreviewAsinDropdown([]);
+        updateSelectedCounter();
+      }
+    });
+  }
 }
 
 // ==========================================================================
@@ -959,10 +994,10 @@ function initSettings() {
           } catch(e) {
             console.warn('LocalStorage quota or storage error:', e);
           }
+          state.currentPage = 1;
           paginateAndRenderClientListings();
         }
 
-        await fetchListings();
         switchTab('listings-tab');
       } else {
         showDbCallout(`❌ Sync Failed: ${data.message}`, 'error');

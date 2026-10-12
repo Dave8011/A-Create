@@ -162,6 +162,11 @@ app.post('/api/sync-db', async (req, res) => {
   }
 });
 
+app.post('/api/clear-listings', (req, res) => {
+  saveListings([]);
+  res.json({ success: true, message: 'All listings cleared' });
+});
+
 // 1. Config & Settings
 app.get('/api/config', (req, res) => {
   res.json(spapi.getConfigSummary());
