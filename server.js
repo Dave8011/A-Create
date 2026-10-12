@@ -16,11 +16,15 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Ensure data and uploads directory exist
-const DATA_DIR = path.join(__dirname, 'data');
-const UPLOADS_DIR = path.join(__dirname, 'uploads');
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+// Ensure data and uploads directory exist (supports Vercel /tmp)
+const DATA_DIR = process.env.VERCEL ? path.join('/tmp', 'data') : path.join(__dirname, 'data');
+const UPLOADS_DIR = process.env.VERCEL ? path.join('/tmp', 'uploads') : path.join(__dirname, 'uploads');
+try {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+} catch (err) {
+  console.warn('Could not initialize storage dirs:', err.message);
+}
 
 // Multer storage for CSV and image uploads
 const storage = multer.diskStorage({
@@ -35,23 +39,33 @@ const spapi = new SpApiClient({
   marketplaceId: process.env.SP_API_MARKETPLACE_ID || INDIA_MARKETPLACE_ID
 });
 
-// Load listings strictly from database storage (NO MOCK/FAKE DATA)
+// Load listings with in-memory fallback for serverless hosting
 const LISTINGS_FILE = path.join(DATA_DIR, 'listings.json');
+let inMemoryListings = [];
 
 function getListings() {
+  if (inMemoryListings.length > 0) return inMemoryListings;
   if (fs.existsSync(LISTINGS_FILE)) {
     try {
       const data = JSON.parse(fs.readFileSync(LISTINGS_FILE, 'utf-8'));
-      if (Array.isArray(data)) return data;
+      if (Array.isArray(data)) {
+        inMemoryListings = data;
+        return data;
+      }
     } catch {
-      return [];
+      return inMemoryListings;
     }
   }
-  return [];
+  return inMemoryListings;
 }
 
 function saveListings(listings) {
-  fs.writeFileSync(LISTINGS_FILE, JSON.stringify(listings, null, 2));
+  inMemoryListings = listings || [];
+  try {
+    fs.writeFileSync(LISTINGS_FILE, JSON.stringify(listings, null, 2));
+  } catch (err) {
+    console.warn('Could not write listings to disk, retained in memory:', err.message);
+  }
 }
 
 // Active batch processing queue state
@@ -659,11 +673,15 @@ app.post('/api/audit-asin', async (req, res) => {
 });
 
 
-// Start Server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`====================================================`);
-  console.log(`🚀 Amazon A+ Content Bulk Manager Server Running!`);
-  console.log(`🌐 Local URL: http://localhost:${PORT}`);
-  console.log(`📦 Status: SP-API & Database Engine Ready`);
-  console.log(`====================================================`);
-});
+// Start Server locally, or export app for Vercel Serverless
+if (!process.env.VERCEL) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`====================================================`);
+    console.log(`🚀 Amazon A+ Content Bulk Manager Server Running!`);
+    console.log(`🌐 Local URL: http://localhost:${PORT}`);
+    console.log(`📦 Status: SP-API & Database Engine Ready`);
+    console.log(`====================================================`);
+  });
+}
+
+module.exports = app;
