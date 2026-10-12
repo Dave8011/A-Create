@@ -19,6 +19,21 @@ const state = {
 
 // DOM Ready initialization
 document.addEventListener('DOMContentLoaded', () => {
+  // Restore cached listings from localStorage immediately (prevents empty table during initial load/navigation)
+  try {
+    const cached = localStorage.getItem('aplus_cached_listings');
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        state.allListings = parsed;
+        state.loadedItems = parsed;
+        paginateAndRenderClientListings();
+      }
+    }
+  } catch (e) {
+    console.warn('Could not read cached listings:', e);
+  }
+
   initNavigation();
   fetchListings();
   fetchConfig();
@@ -81,14 +96,83 @@ async function fetchListings() {
     });
 
     const res = await fetch(`/api/listings?${params.toString()}`);
-    state.loadedItems = data.items || [];
-    updateKpis(data.metrics);
-    renderTable(data.items);
-    renderPagination(data.totalCount, data.page, data.totalPages);
-    updatePreviewAsinDropdown(data.items);
+    const data = await res.json();
+
+    if (data && data.items && data.items.length > 0) {
+      state.allListings = data.items;
+      state.loadedItems = data.items;
+      try { localStorage.setItem('aplus_cached_listings', JSON.stringify(data.items)); } catch(e){}
+      updateKpis(data.metrics);
+      renderTable(data.items);
+      renderPagination(data.totalCount, data.page, data.totalPages);
+      updatePreviewAsinDropdown(data.items);
+    } else {
+      // Fallback to client-side cached listings (vital for Vercel serverless containers)
+      let cached = state.allListings;
+      if (!cached || cached.length === 0) {
+        try {
+          const stored = localStorage.getItem('aplus_cached_listings');
+          if (stored) cached = JSON.parse(stored);
+        } catch(e){}
+      }
+
+      if (cached && cached.length > 0) {
+        state.allListings = cached;
+        paginateAndRenderClientListings();
+      } else {
+        updateKpis(data.metrics || { total: 0, approved: 0, submitted: 0, rejected: 0, draft: 0, liveOnAmazon: 0 });
+        renderTable([]);
+        renderPagination(0, 1, 1);
+        updatePreviewAsinDropdown([]);
+      }
+    }
   } catch (err) {
     console.error('Failed to load listings:', err);
+    if (state.allListings && state.allListings.length > 0) {
+      paginateAndRenderClientListings();
+    }
   }
+}
+
+function paginateAndRenderClientListings() {
+  let list = state.allListings || [];
+
+  // Filter by status
+  if (state.currentFilter && state.currentFilter !== 'ALL') {
+    list = list.filter(item => item.status === state.currentFilter);
+  }
+
+  // Filter by search
+  if (state.searchQuery) {
+    const q = state.searchQuery.toLowerCase();
+    list = list.filter(item => 
+      (item.asin || '').toLowerCase().includes(q) ||
+      (item.sku || '').toLowerCase().includes(q) ||
+      (item.title || '').toLowerCase().includes(q)
+    );
+  }
+
+  // Compute metrics
+  const all = state.allListings || [];
+  const metrics = {
+    total: all.length,
+    approved: all.filter(l => l.status === 'APPROVED').length,
+    submitted: all.filter(l => l.status === 'SUBMITTED').length,
+    rejected: all.filter(l => l.status === 'REJECTED').length,
+    draft: all.filter(l => l.status === 'DRAFT').length,
+    liveOnAmazon: all.filter(l => l.liveOnAmazon).length
+  };
+  updateKpis(metrics);
+
+  const totalCount = list.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / state.limit));
+  const startIndex = (state.currentPage - 1) * state.limit;
+  const pagedItems = list.slice(startIndex, startIndex + state.limit);
+
+  state.loadedItems = pagedItems;
+  renderTable(pagedItems);
+  renderPagination(totalCount, state.currentPage, totalPages);
+  updatePreviewAsinDropdown(list);
 }
 
 function updateKpis(metrics) {
@@ -667,12 +751,29 @@ function ensureOption(selectId, value) {
   }
 }
 
+let allDiscoveredTables = [];
+
+function populateFilteredDropdown(selectEl, tables, currentVal, placeholder) {
+  if (!selectEl) return;
+  selectEl.innerHTML = `<option value="">-- ${placeholder} --</option>`;
+  tables.forEach(tableName => {
+    const opt = document.createElement('option');
+    opt.value = tableName;
+    opt.textContent = tableName;
+    if (tableName === currentVal) opt.selected = true;
+    selectEl.appendChild(opt);
+  });
+}
+
 function renderDiscoveredTables(tables) {
   const selAmazon = document.getElementById('selDbAmazonTable');
   const selProducts = document.getElementById('selDbProductsTable');
+  const searchAmz = document.getElementById('searchDbAmazonTable');
+  const searchProd = document.getElementById('searchDbProductsTable');
   const badge = document.getElementById('tableDiscoveryBadge');
 
   if (!tables || tables.length === 0) return;
+  allDiscoveredTables = tables;
 
   if (badge) {
     badge.textContent = `${tables.length} tables found`;
@@ -684,15 +785,7 @@ function renderDiscoveredTables(tables) {
 
   // Populate Amazon table dropdown
   if (selAmazon) {
-    selAmazon.innerHTML = '<option value="">-- Select Listing / Amazon Table --</option>';
-    tables.forEach(tableName => {
-      const opt = document.createElement('option');
-      opt.value = tableName;
-      opt.textContent = tableName;
-      if (tableName === currentAmazon) opt.selected = true;
-      selAmazon.appendChild(opt);
-    });
-
+    populateFilteredDropdown(selAmazon, tables, currentAmazon, 'Select Listing / Amazon Table');
     selAmazon.onchange = (e) => {
       document.getElementById('cfgDbAmazonTable').value = e.target.value;
       if (e.target.value) showDbCallout(`Selected Amazon table: '${e.target.value}'`, 'info');
@@ -701,23 +794,55 @@ function renderDiscoveredTables(tables) {
 
   // Populate Products table dropdown
   if (selProducts) {
-    selProducts.innerHTML = '<option value="">-- Select Products Master Table --</option>';
-    tables.forEach(tableName => {
-      const opt = document.createElement('option');
-      opt.value = tableName;
-      opt.textContent = tableName;
-      if (tableName === currentProducts) opt.selected = true;
-      selProducts.appendChild(opt);
-    });
-
+    populateFilteredDropdown(selProducts, tables, currentProducts, 'Select Products Master Table');
     selProducts.onchange = (e) => {
       document.getElementById('cfgDbProductsTable').value = e.target.value;
       if (e.target.value) showDbCallout(`Selected Products table: '${e.target.value}'`, 'info');
     };
   }
+
+  // Live search filtering for Amazon table dropdown
+  if (searchAmz && selAmazon) {
+    searchAmz.oninput = (e) => {
+      const q = e.target.value.toLowerCase().trim();
+      const filtered = q ? allDiscoveredTables.filter(t => t.toLowerCase().includes(q)) : allDiscoveredTables;
+      const cur = document.getElementById('cfgDbAmazonTable').value.trim();
+      populateFilteredDropdown(selAmazon, filtered, cur, `Showing ${filtered.length} matching tables`);
+    };
+  }
+
+  // Live search filtering for Products table dropdown
+  if (searchProd && selProducts) {
+    searchProd.oninput = (e) => {
+      const q = e.target.value.toLowerCase().trim();
+      const filtered = q ? allDiscoveredTables.filter(t => t.toLowerCase().includes(q)) : allDiscoveredTables;
+      const cur = document.getElementById('cfgDbProductsTable').value.trim();
+      populateFilteredDropdown(selProducts, filtered, cur, `Showing ${filtered.length} matching tables`);
+    };
+  }
 }
 
 function initSettings() {
+  // ⚡ 1-Click Auto-Fill Preset (PTFS & Amazon India)
+  const autoFillBtn = document.getElementById('autoFillPresetBtn');
+  if (autoFillBtn) {
+    autoFillBtn.addEventListener('click', () => {
+      document.getElementById('cfgDbAmazonTable').value = 'fry_amazon_india_data';
+      document.getElementById('cfgDbMarketplaceCol').value = 'marketplace';
+      document.getElementById('cfgDbMarketplaceVal').value = 'sf_amazon';
+      document.getElementById('cfgDbProductsTable').value = 'fry_products';
+      document.getElementById('cfgDbCategoryCol').value = 'product_classification';
+      document.getElementById('cfgDbCategoryVal').value = 'PTFS';
+      document.getElementById('cfgDbAmzJoinKey').value = 'product_id';
+      document.getElementById('cfgDbProdJoinKey').value = 'productid';
+
+      ensureOption('selDbAmazonTable', 'fry_amazon_india_data');
+      ensureOption('selDbProductsTable', 'fry_products');
+
+      showDbCallout('⚡ Auto-filled PTFS & Amazon India presets! Ready to test connection or fetch listings.', 'info');
+    });
+  }
+
   // OMS DB Settings Form Submit (Saves to .env)
   document.getElementById('dbSettingsForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -844,6 +969,19 @@ function initSettings() {
 
       if (data.success) {
         showDbCallout(`✅ Loaded ${data.count} listings in ${elapsed}s!`, 'success');
+        
+        // Immediately store and render listings locally (guarantees instant display on Vercel or any network)
+        if (data.items && data.items.length > 0) {
+          state.allListings = data.items;
+          state.loadedItems = data.items;
+          try {
+            localStorage.setItem('aplus_cached_listings', JSON.stringify(data.items));
+          } catch(e) {
+            console.warn('LocalStorage quota or storage error:', e);
+          }
+          paginateAndRenderClientListings();
+        }
+
         await fetchListings();
         switchTab('listings-tab');
       } else {

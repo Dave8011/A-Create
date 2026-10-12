@@ -656,22 +656,31 @@
 
           <!-- Clean Dropdown Table & Query Target Configuration -->
           <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); border-radius: 8px; padding: 18px; margin: 16px 0;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
               <h4 style="font-size: 14px; color: var(--amz-gold); margin: 0; display: flex; align-items: center; gap: 6px;">
                 🎯 Automated Query Target: Select Tables & Filters
               </h4>
-              <span id="tableDiscoveryBadge" class="pill-badge pill-draft" style="font-size: 11px;">Connect DB to populate</span>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="autoFillPresetBtn" class="btn btn-xs btn-outline" style="border-color: var(--amz-gold); color: var(--amz-gold); font-size: 11px; padding: 4px 10px;" title="Auto-fills fry_amazon_india_data + fry_products with PTFS & sf_amazon filters">
+                  ⚡ 1-Click Auto-Fill (PTFS & Amazon India)
+                </button>
+                <span id="tableDiscoveryBadge" class="pill-badge pill-draft" style="font-size: 11px;">Connect DB to populate</span>
+              </div>
             </div>
             
             <div style="background: rgba(245, 158, 11, 0.08); border-left: 3px solid var(--amz-gold); padding: 10px 14px; border-radius: 4px; margin-bottom: 16px; font-size: 12px; line-height: 1.6; color: #e2e8f0;">
               <strong>🎯 Automated Query Target:</strong><br>
               Connects to your database, loads table names into the dropdowns, and joins your Amazon listing table with your Products master table to fetch listings & images.<br>
-              <span style="color: #94a3b8; font-size: 11px;">Select your tables from the clean dropdowns below, or type your custom table names.</span>
+              <span style="color: #94a3b8; font-size: 11px;">Search or pick your tables from the dropdowns below, or click <strong>⚡ 1-Click Auto-Fill</strong>.</span>
             </div>
 
             <div class="form-row">
               <div class="form-group flex-1">
-                <label class="form-label">Amazon Listing Table (Select from Dropdown)</label>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <label class="form-label" style="margin-bottom: 0;">Amazon Listing Table</label>
+                  <span style="font-size: 11px; color: #94a3b8;">🔍 Search to filter:</span>
+                </div>
+                <input type="text" id="searchDbAmazonTable" class="form-input" placeholder="Type to search table (e.g. amazon, india)..." style="margin-bottom: 6px; font-size: 12px; padding: 6px 10px;">
                 <select id="selDbAmazonTable" class="form-input" style="background: #1e293b; color: #f8fafc; font-size: 13px; font-weight: 500; border-color: #475569;">
                   <option value="">-- Click 'Test Connection' to discover tables --</option>
                 </select>
@@ -682,14 +691,18 @@
                 <div style="display: flex; gap: 6px; align-items: center;">
                   <input type="text" id="cfgDbMarketplaceCol" class="form-input" value="" placeholder="Column (e.g. marketplace)" style="flex: 1;" title="Marketplace column name">
                   <span style="color: #94a3b8; font-weight: bold;">=</span>
-                  <input type="text" id="cfgDbMarketplaceVal" class="form-input" value="" placeholder="Filter value (optional)" style="flex: 1;" title="Marketplace value">
+                  <input type="text" id="cfgDbMarketplaceVal" class="form-input" value="" placeholder="Filter value (e.g. sf_amazon)" style="flex: 1;" title="Marketplace value">
                 </div>
               </div>
             </div>
 
             <div class="form-row">
               <div class="form-group flex-1">
-                <label class="form-label">Products Master Table (Select from Dropdown)</label>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <label class="form-label" style="margin-bottom: 0;">Products Master Table</label>
+                  <span style="font-size: 11px; color: #94a3b8;">🔍 Search to filter:</span>
+                </div>
+                <input type="text" id="searchDbProductsTable" class="form-input" placeholder="Type to search table (e.g. product, fry)..." style="margin-bottom: 6px; font-size: 12px; padding: 6px 10px;">
                 <select id="selDbProductsTable" class="form-input" style="background: #1e293b; color: #f8fafc; font-size: 13px; font-weight: 500; border-color: #475569;">
                   <option value="">-- Click 'Test Connection' to discover tables --</option>
                 </select>
@@ -698,9 +711,9 @@
               <div class="form-group flex-1">
                 <label class="form-label">Category Filter (Column = Value, Optional)</label>
                 <div style="display: flex; gap: 6px; align-items: center;">
-                  <input type="text" id="cfgDbCategoryCol" class="form-input" value="" placeholder="Column (e.g. category)" style="flex: 1;" title="Category column name">
+                  <input type="text" id="cfgDbCategoryCol" class="form-input" value="" placeholder="Column (e.g. product_classification)" style="flex: 1;" title="Category column name">
                   <span style="color: #94a3b8; font-weight: bold;">=</span>
-                  <input type="text" id="cfgDbCategoryVal" class="form-input" value="" placeholder="Filter value (optional)" style="flex: 1;" title="Category filter value">
+                  <input type="text" id="cfgDbCategoryVal" class="form-input" value="" placeholder="Filter value (e.g. PTFS)" style="flex: 1;" title="Category filter value">
                 </div>
               </div>
             </div>
