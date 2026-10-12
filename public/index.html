@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Amazon A+ Content Bulk Manager | amazon.in</title>
+  <meta name="description" content="Bulk Amazon A+ Content Manager and Status Audit System for amazon.in using SP-API">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- App Container -->
+  <div class="app-layout">
+    
+    <!-- Top Navigation Bar -->
+    <header class="top-nav">
+      <div class="nav-left">
+        <div class="logo-box">
+          <span class="logo-icon">⚡</span>
+          <div>
+            <h1 class="logo-title">A+ Content Bulk Studio</h1>
+            <span class="logo-subtitle">Amazon SP-API Bulk Manager & Audit Engine</span>
+          </div>
+        </div>
+        <div class="badge-group">
+          <span class="pill-badge pill-in" id="headerMarketplaceBadge">🌐 Amazon SP-API</span>
+          <span id="sandboxBadge" class="pill-badge pill-sandbox">🛡️ Sandbox Simulation</span>
+        </div>
+      </div>
+
+      <div class="nav-right">
+        <button id="refreshDataBtn" class="btn btn-secondary btn-sm" title="Refresh Listings & Status">
+          <span class="icon">🔄</span> Refresh
+        </button>
+        <button id="openBulkUploadBtn" class="btn btn-primary btn-sm">
+          <span class="icon">🚀</span> Start Bulk Update
+        </button>
+        <button id="openSettingsBtn" class="btn btn-icon btn-sm" title="SP-API Settings">
+          <span class="icon">⚙️</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- KPI Metric Cards Bar -->
+    <section class="kpi-banner">
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-label">Total Listings</span>
+          <span class="kpi-icon">📦</span>
+        </div>
+        <div class="kpi-value" id="kpiTotal">0</div>
+        <span class="kpi-foot">Tracked ASINs in catalog</span>
+      </div>
+
+      <div class="kpi-card kpi-success">
+        <div class="kpi-header">
+          <span class="kpi-label">Live on Amazon</span>
+          <span class="kpi-icon">✅</span>
+        </div>
+        <div class="kpi-value" id="kpiLive">0</div>
+        <span class="kpi-foot" id="kpiLivePercent">0% active on amazon.in</span>
+      </div>
+
+      <div class="kpi-card kpi-warning">
+        <div class="kpi-header">
+          <span class="kpi-label">In Review (Submitted)</span>
+          <span class="kpi-icon">⏳</span>
+        </div>
+        <div class="kpi-value" id="kpiSubmitted">0</div>
+        <span class="kpi-foot">Amazon moderation pending</span>
+      </div>
+
+      <div class="kpi-card kpi-danger">
+        <div class="kpi-header">
+          <span class="kpi-label">Moderation Errors</span>
+          <span class="kpi-icon">⚠️</span>
+        </div>
+        <div class="kpi-value" id="kpiErrors">0</div>
+        <span class="kpi-foot">Action required (Rejected)</span>
+      </div>
+
+      <div class="kpi-card kpi-neutral">
+        <div class="kpi-header">
+          <span class="kpi-label">Draft / Pending</span>
+          <span class="kpi-icon">📝</span>
+        </div>
+        <div class="kpi-value" id="kpiDraft">0</div>
+        <span class="kpi-foot">Ready to publish</span>
+      </div>
+    </section>
+
+    <!-- Main Navigation Tabs -->
+    <nav class="tab-navigation">
+      <button class="nav-tab active" data-tab="listings-tab">
+        <span class="tab-icon">📋</span> Listings & Live Audit Matrix
+      </button>
+      <button class="nav-tab" data-tab="slides-tab">
+        <span class="tab-icon">🖼️</span> 7-Slide Manager (Visual Stack)
+      </button>
+      <button class="nav-tab" data-tab="queue-tab">
+        <span class="tab-icon">⚡</span> Bulk Queue & Rate-Limiter
+      </button>
+      <button class="nav-tab" data-tab="preview-tab">
+        <span class="tab-icon">📱</span> Live A+ Product Preview
+      </button>
+      <button class="nav-tab" data-tab="settings-tab">
+        <span class="tab-icon">⚙️</span> Database & SP-API Settings
+      </button>
+    </nav>
+
+    <!-- Tab 1: Catalog Listings Table & Live Status Checker -->
+    <main id="listings-tab" class="tab-content active">
+      <div class="card table-card">
+        <div class="table-toolbar">
+          <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="searchInput" placeholder="Search by ASIN, SKU, or Title...">
+          </div>
+
+          <div class="filter-pills">
+            <button class="pill-btn active" data-filter="ALL">All (<span id="pillAllCount">0</span>)</button>
+            <button class="pill-btn" data-filter="APPROVED">Live / Approved</button>
+            <button class="pill-btn" data-filter="SUBMITTED">In Review</button>
+            <button class="pill-btn" data-filter="REJECTED">Errors (Rejected)</button>
+            <button class="pill-btn" data-filter="DRAFT">Draft</button>
+          </div>
+
+          <div class="toolbar-actions">
+            <button id="openSkuAsinUploadBtn" class="btn btn-primary btn-sm" title="Upload a simple 2-column CSV or TXT file with SKU and ASIN">
+              <span class="icon">📄</span> Upload SKU & ASIN File
+            </button>
+            <button id="batchSelectedBtn" class="btn btn-secondary btn-sm" disabled>
+              Update Selected (<span id="selectedCount">0</span>)
+            </button>
+            <button id="downloadCsvBtn" class="btn btn-outline btn-sm" title="Download sample template for SKU and ASIN">
+              📥 Sample CSV
+            </button>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table" id="listingsTable">
+            <thead>
+              <tr>
+                <th width="40"><input type="checkbox" id="selectAllCheckbox"></th>
+                <th width="140">ASIN</th>
+                <th width="140">SKU</th>
+                <th>Product Title</th>
+                <th width="120">Layout</th>
+                <th width="130">Status</th>
+                <th width="110">Live on IN</th>
+                <th width="160">Moderation / Errors</th>
+                <th width="120">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="listingsTableBody">
+              <!-- Dynamically populated via app.js -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="table-footer">
+          <div class="pagination-info" id="paginationInfo">Showing 0 listings</div>
+          <div class="pagination-controls">
+            <button id="prevPageBtn" class="btn btn-sm btn-secondary" disabled>Previous</button>
+            <span class="page-indicator" id="pageIndicator">Page 0 of 0</span>
+            <button id="nextPageBtn" class="btn btn-sm btn-secondary" disabled>Next</button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Tab 2: 7-Slide Manager (Customized for User's Fennel Seed Stack) -->
+    <main id="slides-tab" class="tab-content">
+      <div class="split-view">
+        <div class="slides-editor-col">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">7-Slide Seamless Graphic Stack</h2>
+                <p class="card-desc">Designed for pre-designed 970×600 px banner stacks (like Organic Fennel Seed / Pure Tree).</p>
+              </div>
+              <div class="preset-selector">
+                <span class="preset-badge">Preset: 7-Slide Standard</span>
+              </div>
+            </div>
+
+            <!-- Slide Upload Slots -->
+            <div class="slides-grid" id="slidesGrid">
+              <!-- Slide 1 -->
+              <div class="slide-card" data-slide="1">
+                <div class="slide-card-header">
+                  <span class="slide-num">Slide 1</span>
+                  <span class="slide-type-tag">Hero Banner</span>
+                  <span class="slide-dim">970 × 600 px</span>
+                </div>
+                <div class="slide-dropzone" id="dropzone1">
+                  <div class="drop-preview" id="preview1">
+                    <div class="drop-placeholder">
+                      <span class="drop-icon">🖼️</span>
+                      <p><strong>01_hero.jpg</strong></p>
+                      <small>Product Pouch, Title & "Naturally Aromatic"</small>
+                    </div>
+                  </div>
+                  <input type="file" class="file-input" accept="image/jpeg,image/png">
+                </div>
+              </div>
+
+              <!-- Slide 2 -->
+              <div class="slide-card" data-slide="2">
+                <div class="slide-card-header">
+                  <span class="slide-num">Slide 2</span>
+                  <span class="slide-type-tag">Trust Badges</span>
+                  <span class="slide-dim">970 × 600 px</span>
+                </div>
+                <div class="slide-dropzone" id="dropzone2">
+                  <div class="drop-preview" id="preview2">
+                    <div class="drop-placeholder">
+                      <span class="drop-icon">🛡️</span>
+                      <p><strong>02_badges.jpg</strong></p>
+                      <small>No Pesticides, Lab Tested, Traceability</small>
+                    </div>
+                  </div>
+                  <input type="file" class="file-input" accept="image/jpeg,image/png">
+                </div>
+              </div>
+
+              <!-- Slide 3 -->
+              <div class="slide-card" data-slide="3">
+                <div class="slide-card-header">
+                  <span class="slide-num">Slide 3</span>
+                  <span class="slide-type-tag">Free-From Highlights</span>
+                  <span class="slide-dim">970 × 600 px</span>
+                </div>
+                <div class="slide-dropzone" id="dropzone3">
+                  <div class="drop-preview" id="preview3">
+                    <div class="drop-placeholder">
+                      <span class="drop-icon">🌿</span>
+                      <p><strong>03_freefrom.jpg</strong></p>
+                      <small>No Colors, No Preservatives, Non-GMO</small>
+                    </div>
+                  </div>
+                  <input type="file" class="file-input" accept="image/jpeg,image/png">
+                </div>
+              </div>
+
+              <!-- Slide 4 -->
+              <div class="slide-card" data-slide="4">
+                <div class="slide-card-header">
+                  <span class="slide-num">Slide 4</span>
+                  <span class="slide-type-tag">Why Organic</span>
+                  <span class="slide-dim">970 × 600 px</span>
+                </div>
+                <div class="slide-dropzone" id="dropzone4">
+                  <div class="drop-preview" id="preview4">
+                    <div class="drop-placeholder">
+                      <span class="drop-icon">🌱</span>
+                      <p><strong>04_why_organic.jpg</strong></p>
+                      <small>Organic Certification Seal & Why It Matters</small>
+                    </div>
+                  </div>
+                  <input type="file" class="file-input" accept="image/jpeg,image/png">
+                </div>
+              </div>
+
+              <!-- Slide 5 -->
+              <div class="slide-card" data-slide="5">
+                <div class="slide-card-header">
+                  <span class="slide-num">Slide 5</span>
+                  <span class="slide-type-tag">Official Certifications</span>
+                  <span class="slide-dim">970 × 600 px</span>
+                </div>
+                <div class="slide-dropzone" id="dropzone5">
+                  <div class="drop-preview" id="preview5">
+                    <div class="drop-placeholder">
+                      <span class="drop-icon">📜</span>
+                      <p><strong>05_certification.jpg</strong></p>
+                      <small>FSSAI, India Organic, Foodchain & Traceability</small>
+                    </div>
+                  </div>
+                  <input type="file" class="file-input" accept="image/jpeg,image/png">
+                </div>
+              </div>
+
+              <!-- Slide 6 -->
+              <div class="slide-card" data-slide="6">
+                <div class="slide-card-header">
+                  <span class="slide-num">Slide 6</span>
+                  <span class="slide-type-tag">Culinary Usage</span>
+                  <span class="slide-dim">970 × 600 px</span>
+                </div>
+                <div class="slide-dropzone" id="dropzone6">
+                  <div class="drop-preview" id="preview6">
+                    <div class="drop-placeholder">
+                      <span class="drop-icon">🍲</span>
+                      <p><strong>06_usage.jpg</strong></p>
+                      <small>4-Tile Application: Snacking, Tea, Dishes, Salads</small>
+                    </div>
+                  </div>
+                  <input type="file" class="file-input" accept="image/jpeg,image/png">
+                </div>
+              </div>
+
+              <!-- Slide 7 -->
+              <div class="slide-card" data-slide="7">
+                <div class="slide-card-header">
+                  <span class="slide-num">Slide 7</span>
+                  <span class="slide-type-tag">Taste & Lifestyle</span>
+                  <span class="slide-dim">970 × 600 px</span>
+                </div>
+                <div class="slide-dropzone" id="dropzone7">
+                  <div class="drop-preview" id="preview7">
+                    <div class="drop-placeholder">
+                      <span class="drop-icon">👩‍🍳</span>
+                      <p><strong>07_taste_recipe.jpg</strong></p>
+                      <small>Cooking Scene, Recipe Bullets & Final CTA</small>
+                    </div>
+                  </div>
+                  <input type="file" class="file-input" accept="image/jpeg,image/png">
+                </div>
+              </div>
+            </div>
+
+            <!-- Slide Actions -->
+            <div class="card-footer flex-between">
+              <button id="validateSlideSetBtn" class="btn btn-secondary">
+                <span class="icon">🔍</span> Run Pre-flight Validation
+              </button>
+              <button id="applyToAsinBtn" class="btn btn-primary">
+                <span class="icon">🚀</span> Publish to Target ASIN
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Validation Results Card -->
+        <div class="validation-col">
+          <div class="card">
+            <h3 class="card-title">Pre-flight Validation</h3>
+            <p class="card-desc">Amazon SP-API rules verification before submission.</p>
+
+            <div class="checklist" id="preflightChecklist">
+              <div class="check-item check-pass">
+                <span class="check-icon">✓</span>
+                <div>
+                  <strong>Resolution & Dimensions</strong>
+                  <p>All slides conform to 970 × 600 px banner width</p>
+                </div>
+              </div>
+              <div class="check-item check-pass">
+                <span class="check-icon">✓</span>
+                <div>
+                  <strong>File Size Threshold</strong>
+                  <p>Each slide is below 2.0 MB maximum threshold</p>
+                </div>
+              </div>
+              <div class="check-item check-pass">
+                <span class="check-icon">✓</span>
+                <div>
+                  <strong>Color Profile</strong>
+                  <p>sRGB color space detected (no CMYK print errors)</p>
+                </div>
+              </div>
+              <div class="check-item check-pass">
+                <span class="check-icon">✓</span>
+                <div>
+                  <strong>Marketplace Locale</strong>
+                  <p>Locale set to en_IN for Amazon India</p>
+                </div>
+              </div>
+              <div class="check-item check-pass">
+                <span class="check-icon">✓</span>
+                <div>
+                  <strong>Prohibited Claims Filter</strong>
+                  <p>No unverified claims ("cure", "100% guarantee", "best price")</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="guide-box">
+              <h4>💡 Pro-Tip for Catalog Ingestion:</h4>
+              <p>For items sharing identical brand story slides (e.g. Slides for Certifications and Trust Badges), the CSV manifest allows referencing the same shared image path to save bandwidth and upload time!</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Tab 3: Bulk Queue & Rate-Limiter Engine -->
+    <main id="queue-tab" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Bulk Execution Queue & Rate Limiter</h2>
+            <p class="card-desc">Automated batch processor with Amazon SP-API quota management (capped at 8 req/sec).</p>
+          </div>
+          <div class="queue-controls">
+            <button id="startBulkAllBtn" class="btn btn-primary">
+              <span class="icon">▶️</span> Start Bulk Catalog Update
+            </button>
+            <button id="stopQueueBtn" class="btn btn-danger btn-sm" disabled>
+              <span class="icon">⏹️</span> Cancel Queue
+            </button>
+          </div>
+        </div>
+
+        <!-- Progress Metrics -->
+        <div class="progress-section">
+          <div class="progress-bar-container">
+            <div class="progress-bar" id="queueProgressBar" style="width: 0%;"></div>
+          </div>
+          <div class="progress-stats">
+            <span id="queueProgressText">0 / 0 Completed (0%)</span>
+            <span id="queueEstimatedTime">Est. Time Remaining: --:--</span>
+          </div>
+        </div>
+
+        <div class="queue-metrics-row">
+          <div class="mini-metric">
+            <span class="mini-label">Processed</span>
+            <span class="mini-value" id="qProcessed">0</span>
+          </div>
+          <div class="mini-metric mini-success">
+            <span class="mini-label">Success</span>
+            <span class="mini-value" id="qSuccess">0</span>
+          </div>
+          <div class="mini-metric mini-danger">
+            <span class="mini-label">Failed / Retried</span>
+            <span class="mini-value" id="qFailed">0</span>
+          </div>
+          <div class="mini-metric">
+            <span class="mini-label">Throughput</span>
+            <span class="mini-value" id="qRate">8.0 req/s</span>
+          </div>
+        </div>
+
+        <!-- Real-Time Terminal Log -->
+        <div class="terminal-card">
+          <div class="terminal-header">
+            <span class="terminal-title">🖥️ SP-API Live Execution Log</span>
+            <button id="clearLogsBtn" class="btn btn-xs btn-secondary">Clear</button>
+          </div>
+          <div class="terminal-window" id="terminalLog">
+            <div class="term-line info">[System] Engine initialized. Ready to process listings for amazon.in...</div>
+            <div class="term-line info">[Quota] Rate-limiting guard active: 8 requests/second to prevent 429 throttling.</div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Tab 4: Visual A+ Product Detail Page Previewer -->
+    <main id="preview-tab" class="tab-content">
+      <div class="preview-layout">
+        <div class="preview-sidebar">
+          <div class="card">
+            <h3 class="card-title">Preview Controls</h3>
+            <p class="card-desc">Inspect how the 7-slide layout appears to customers on Amazon India.</p>
+
+            <div class="form-group">
+              <label class="form-label">Select ASIN to Preview</label>
+              <select id="previewAsinSelect" class="form-input">
+                <option value="">-- Load or import listings to preview --</option>
+              </select>
+            </div>
+
+            <div class="preview-device-toggle">
+              <button class="device-btn active" data-device="desktop">
+                💻 Desktop (970px)
+              </button>
+              <button class="device-btn" data-device="mobile">
+                📱 Mobile View
+              </button>
+            </div>
+
+            <div class="asin-quick-meta">
+              <div class="meta-row">
+                <span>Marketplace:</span>
+                <strong>amazon.in</strong>
+              </div>
+              <div class="meta-row">
+                <span>A+ Type:</span>
+                <strong>Standard EBC (7 Slides)</strong>
+              </div>
+              <div class="meta-row">
+                <span>Status:</span>
+                <span class="pill-badge pill-approved">APPROVED / LIVE</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="preview-canvas-container">
+          <div class="amazon-mockup desktop-frame" id="mockupFrame">
+            <div class="amazon-mockup-header">
+              <div class="amz-logo">amazon<span>.in</span></div>
+              <div class="amz-search-bar">Search Amazon.in</div>
+            </div>
+
+            <!-- Product Header Mock -->
+            <div class="amz-prod-header">
+              <h2 id="mockupTitle">Certified Organic Fennel Seed (Saunf) - Naturally Aromatic, 500g</h2>
+              <div class="amz-stars">⭐⭐⭐⭐⭐ <span class="review-count">1,482 ratings</span> | <span class="badge-choice">Amazon's Choice</span></div>
+              <div class="amz-price">₹289 <span class="amz-tax">(Inclusive of all taxes)</span></div>
+            </div>
+
+            <div class="amz-divider"></div>
+            <div class="amz-section-title">From the Manufacturer (A+ Enhanced Content)</div>
+
+            <!-- 7-Slide Live Stack Container -->
+            <div class="aplus-live-stack" id="aplusLiveStack">
+              <!-- Slide 1 -->
+              <div class="aplus-module-banner banner-1">
+                <div class="banner-overlay-content">
+                  <span class="tag-organic">CERTIFIED ORGANIC</span>
+                  <h2>FENNEL SEED (SAUNF)</h2>
+                  <span class="tag-sub">NATURALLY AROMATIC</span>
+                </div>
+              </div>
+
+              <!-- Slide 2 -->
+              <div class="aplus-module-banner banner-2">
+                <div class="banner-grid-4">
+                  <div class="banner-feature">
+                    <span class="bf-icon">🚫</span>
+                    <strong>NO PESTICIDES & HARMFUL CHEMICALS</strong>
+                  </div>
+                  <div class="banner-feature">
+                    <span class="bf-icon">🔬</span>
+                    <strong>STRINGENT LABORATORY TESTING</strong>
+                  </div>
+                  <div class="banner-feature">
+                    <span class="bf-icon">📋</span>
+                    <strong>TRACEABILITY & TRANSPARENCY</strong>
+                  </div>
+                  <div class="banner-feature">
+                    <span class="bf-icon">🌱</span>
+                    <strong>SUPPORTING ORGANIC FARMING</strong>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Slide 3 -->
+              <div class="aplus-module-banner banner-3">
+                <div class="banner-freefrom">
+                  <h3>FREE FROM</h3>
+                  <ul>
+                    <li>✓ ARTIFICIAL COLORS</li>
+                    <li>✓ PRESERVATIVES</li>
+                    <li>✓ GMOS</li>
+                  </ul>
+                </div>
+              </div>
+
+              <!-- Slide 4 -->
+              <div class="aplus-module-banner banner-4">
+                <div class="banner-cert-why">
+                  <div class="seal-badge">CERTIFIED ORGANIC PRODUCT</div>
+                  <div class="seal-text">
+                    <h3>WHY ORGANIC CERTIFICATION IS IMPORTANT?</h3>
+                    <p>Certified Organic ensures the product is really organic. It ensures the product does not get any contamination till it reaches your hands.</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Slide 5 -->
+              <div class="aplus-module-banner banner-5">
+                <div class="banner-gov-cert">
+                  <h3>OUR CERTIFICATION</h3>
+                  <div class="cert-logos">
+                    <span class="logo-box-cert">fssai 10017022006293</span>
+                    <span class="logo-box-cert">India Organic (NPOP)</span>
+                    <span class="logo-box-cert">FOODCHAIN ID</span>
+                  </div>
+                  <span class="purity-tag">PURITY YOU CAN TRACE</span>
+                </div>
+              </div>
+
+              <!-- Slide 6 -->
+              <div class="aplus-module-banner banner-6">
+                <div class="banner-usage-title">EXPLORE THE VERSATILE WAYS OF USE</div>
+                <div class="usage-grid">
+                  <div class="usage-tile"><span>DIRECT AFTER MEALS</span></div>
+                  <div class="usage-tile"><span>AROMATIC MUKHWAS</span></div>
+                  <div class="usage-tile"><span>HERBAL TEA INFUSION</span></div>
+                  <div class="usage-tile"><span>CULINARY & CURRY SPICE</span></div>
+                </div>
+              </div>
+
+              <!-- Slide 7 -->
+              <div class="aplus-module-banner banner-7">
+                <div class="banner-footer-cta">
+                  <h3>ENJOY THE BEST TASTE WITH GOODNESS OF ORGANIC</h3>
+                  <ul>
+                    <li>✓ Handpicked premium seeds</li>
+                    <li>✓ Retains essential aromatic oils</li>
+                    <li>✓ Freshly sealed zipper pouch</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Tab 5: Settings (OMS Database & SP-API) -->
+    <main id="settings-tab" class="tab-content">
+      <!-- 1. OMS Database Connection Card -->
+      <div class="card settings-card" style="margin-bottom: 24px;">
+        <div class="card-header" style="margin-bottom: 12px;">
+          <div>
+            <h2 class="card-title">🗄️ OMS Database Connection (MySQL)</h2>
+            <p class="card-desc">Enter your credentials and test the connection immediately without needing to save first.</p>
+          </div>
+          <span id="dbStatusBadge" class="pill-badge pill-draft">Disconnected</span>
+        </div>
+
+        <form id="dbSettingsForm">
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">DB Host (IP / Hostname)</label>
+              <input type="text" id="cfgDbHost" class="form-input" placeholder="e.g. database-host.com">
+            </div>
+            <div class="form-group" style="width: 120px;">
+              <label class="form-label">DB Port</label>
+              <input type="number" id="cfgDbPort" class="form-input" value="3306" placeholder="3306">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">DB Database Name</label>
+              <input type="text" id="cfgDbName" class="form-input" placeholder="e.g. your_database">
+            </div>
+            <div class="form-group flex-1">
+              <label class="form-label">DB Username</label>
+              <input type="text" id="cfgDbUser" class="form-input" placeholder="e.g. db_user">
+            </div>
+            <div class="form-group flex-1">
+              <label class="form-label">DB Password</label>
+              <input type="password" id="cfgDbPassword" class="form-input" placeholder="••••••••••••••••">
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+            <button type="button" id="testDbConnectionBtn" class="btn btn-secondary">
+              <span class="icon">🔌</span> Test Database Connection
+            </button>
+            <button type="submit" class="btn btn-primary">
+              <span class="icon">💾</span> Save Credentials to .env
+            </button>
+          </div>
+
+          <!-- Clean Dropdown Table & Query Target Configuration -->
+          <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); border-radius: 8px; padding: 18px; margin: 16px 0;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+              <h4 style="font-size: 14px; color: var(--amz-gold); margin: 0; display: flex; align-items: center; gap: 6px;">
+                🎯 Automated Query Target: Select Tables & Filters
+              </h4>
+              <span id="tableDiscoveryBadge" class="pill-badge pill-draft" style="font-size: 11px;">Connect DB to populate</span>
+            </div>
+            
+            <div style="background: rgba(245, 158, 11, 0.08); border-left: 3px solid var(--amz-gold); padding: 10px 14px; border-radius: 4px; margin-bottom: 16px; font-size: 12px; line-height: 1.6; color: #e2e8f0;">
+              <strong>🎯 Automated Query Target:</strong><br>
+              Connects to your database, loads table names into the dropdowns, and joins your Amazon listing table with your Products master table to fetch listings & images.<br>
+              <span style="color: #94a3b8; font-size: 11px;">Select your tables from the clean dropdowns below, or type your custom table names.</span>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group flex-1">
+                <label class="form-label">Amazon Listing Table (Select from Dropdown)</label>
+                <select id="selDbAmazonTable" class="form-input" style="background: #1e293b; color: #f8fafc; font-size: 13px; font-weight: 500; border-color: #475569;">
+                  <option value="">-- Click 'Test Connection' to discover tables --</option>
+                </select>
+                <input type="text" id="cfgDbAmazonTable" class="form-input" value="" placeholder="Or enter table name..." style="display: none;">
+              </div>
+              <div class="form-group flex-1">
+                <label class="form-label">Marketplace Filter (Column = Value, Optional)</label>
+                <div style="display: flex; gap: 6px; align-items: center;">
+                  <input type="text" id="cfgDbMarketplaceCol" class="form-input" value="" placeholder="Column (e.g. marketplace)" style="flex: 1;" title="Marketplace column name">
+                  <span style="color: #94a3b8; font-weight: bold;">=</span>
+                  <input type="text" id="cfgDbMarketplaceVal" class="form-input" value="" placeholder="Filter value (optional)" style="flex: 1;" title="Marketplace value">
+                </div>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group flex-1">
+                <label class="form-label">Products Master Table (Select from Dropdown)</label>
+                <select id="selDbProductsTable" class="form-input" style="background: #1e293b; color: #f8fafc; font-size: 13px; font-weight: 500; border-color: #475569;">
+                  <option value="">-- Click 'Test Connection' to discover tables --</option>
+                </select>
+                <input type="text" id="cfgDbProductsTable" class="form-input" value="" placeholder="Or enter table name..." style="display: none;">
+              </div>
+              <div class="form-group flex-1">
+                <label class="form-label">Category Filter (Column = Value, Optional)</label>
+                <div style="display: flex; gap: 6px; align-items: center;">
+                  <input type="text" id="cfgDbCategoryCol" class="form-input" value="" placeholder="Column (e.g. category)" style="flex: 1;" title="Category column name">
+                  <span style="color: #94a3b8; font-weight: bold;">=</span>
+                  <input type="text" id="cfgDbCategoryVal" class="form-input" value="" placeholder="Filter value (optional)" style="flex: 1;" title="Category filter value">
+                </div>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group flex-1">
+                <label class="form-label">Amazon Join Column (Optional)</label>
+                <input type="text" id="cfgDbAmzJoinKey" class="form-input" value="" placeholder="e.g. product_id or sku" title="Join key in Amazon table (auto-detected if blank)">
+                <small style="color: #94a3b8; font-size: 11px;">Leave blank to auto-detect matching foreign key or SKU column</small>
+              </div>
+              <div class="form-group flex-1">
+                <label class="form-label">Products Join Column (Optional)</label>
+                <input type="text" id="cfgDbProdJoinKey" class="form-input" value="" placeholder="e.g. productid or sku" title="Join key in Products table (auto-detected if blank)">
+                <small style="color: #94a3b8; font-size: 11px;">Leave blank to auto-detect matching primary key or SKU column</small>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button type="button" id="syncOmsDbBtn" class="btn btn-outline" style="font-weight: 600; padding: 10px 18px;">
+              <span class="icon">📥</span> Fetch Listings from Database
+            </button>
+          </div>
+        </form>
+
+        <div id="dbStatusCallout" class="status-callout" style="display: none; margin-top: 14px;"></div>
+      </div>
+
+      <!-- 2. Amazon SP-API Configuration Card -->
+      <div class="card settings-card">
+        <h2 class="card-title">🔐 Amazon SP-API Configuration</h2>
+        <p class="card-desc">Configure your Selling Partner API credentials for publishing to Amazon.</p>
+
+        <form id="settingsForm">
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">LWA Client ID (App Client ID)</label>
+              <input type="text" id="cfgClientId" class="form-input" placeholder="amzn1.application-oa2-client.xxxxxxxx">
+            </div>
+            <div class="form-group flex-1">
+              <label class="form-label">LWA Client Secret</label>
+              <input type="password" id="cfgClientSecret" class="form-input" placeholder="••••••••••••••••••••••••••••••••">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">LWA Refresh Token</label>
+            <textarea id="cfgRefreshToken" class="form-input" rows="3" placeholder="Atzr|IwEBI..."></textarea>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">Amazon Marketplace ID</label>
+              <input type="text" id="cfgMarketplace" class="form-input" value="" placeholder="Enter Marketplace ID (e.g. A21TJRUUN4KGV)">
+              <small style="color: var(--text-muted); font-size: 11px; margin-top: 4px; display: block;">Enter your target Marketplace ID (e.g. India: A21TJRUUN4KGV, US: ATVPDKIKX0DER, UK: A1F83G8C2ARO7P)</small>
+            </div>
+            <div class="form-group flex-1">
+              <label class="form-label">Regional API Endpoint</label>
+              <input type="text" id="cfgEndpoint" class="form-input" value="https://sellingpartnerapi-eu.amazon.com" disabled>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="cfgSandboxMode" checked>
+              <span>Enable Sandbox Simulation Mode (Test workflows safely without altering live Amazon catalog)</span>
+            </label>
+          </div>
+
+          <div class="form-actions">
+            <button type="button" id="syncLiveAmazonBtn" class="btn btn-outline">
+              <span class="icon">🔄</span> Sync Live Catalog from Amazon
+            </button>
+            <button type="button" id="testConnectionBtn" class="btn btn-secondary">
+              <span class="icon">🔌</span> Test Connection
+            </button>
+            <button type="submit" class="btn btn-primary">
+              <span class="icon">💾</span> Save Settings
+            </button>
+          </div>
+        </form>
+
+        <div id="connectionStatusBox" class="status-callout" style="display: none;"></div>
+      </div>
+    </main>
+
+  </div>
+
+  <!-- Moderation Error Details Modal -->
+  <div class="modal-overlay" id="errorModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Amazon Moderation Feedback & Errors</h3>
+        <button class="modal-close" id="closeErrorModalBtn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-asin-bar">
+          <span id="modalAsinText">B08N000015</span>
+          <span class="pill-badge pill-danger">REJECTED</span>
+        </div>
+        <p class="modal-instruction">Amazon's automated review flagged the following issues with your A+ Content:</p>
+        <div class="error-list" id="modalErrorList">
+          <!-- Dynamic errors -->
+        </div>
+        <div class="guide-box">
+          <h4>How to Fix:</h4>
+          <p>1. Edit the flagged slide in your image editor to remove the prohibited text/claim.<br>
+          2. Re-upload the corrected image.<br>
+          3. Click "Re-submit" to push the update through SP-API for instant re-moderation.</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="closeModalActionBtn">Dismiss</button>
+        <button class="btn btn-primary" id="resubmitAsinBtn">Fix & Re-Submit ASIN</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bulk CSV Upload Modal -->
+  <div class="modal-overlay" id="bulkUploadModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Bulk CSV Manifest Ingestion</h3>
+        <button class="modal-close" id="closeBulkModalBtn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>Upload your ASIN mapping CSV to validate and enqueue the bulk A+ update.</p>
+        
+        <div class="file-drop-area" id="csvDropArea">
+          <span class="drop-icon">📄</span>
+          <p><strong>Drag & Drop your manifest CSV here</strong> or click to browse</p>
+          <small>Required columns: ASIN, SKU, Slide_1, Slide_2, ..., Slide_7</small>
+          <input type="file" id="csvFileInput" accept=".csv" style="display: none;">
+        </div>
+
+        <div id="csvFileInfo" class="file-info-bar" style="display: none;">
+          <span id="csvFileName">manifest.csv</span>
+          <span class="badge-ready">Validated Ready</span>
+        </div>
+
+        <div class="download-tip">
+          Don't have the template yet? 
+          <a href="/api/download-template-csv" download class="link">Download 7-Slide Sample CSV Template</a>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancelBulkModalBtn">Cancel</button>
+        <button class="btn btn-primary" id="processCsvBtn" disabled>Parse & Start Batch</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dedicated SKU & ASIN File Upload Modal -->
+  <div class="modal-overlay" id="skuAsinUploadModal">
+    <div class="modal-content" style="max-width: 560px;">
+      <div class="modal-header">
+        <h3 class="modal-title">📄 Import Listings via File (SKU & ASIN Only)</h3>
+        <button class="modal-close" id="closeSkuAsinModalBtn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="background: rgba(59, 130, 246, 0.1); border-left: 3px solid #3b82f6; padding: 10px 14px; border-radius: 4px; margin-bottom: 16px; font-size: 12.5px; color: #e2e8f0;">
+          <strong>Quick Catalog Import:</strong> Only <strong>SKU</strong> and <strong>ASIN</strong> are needed. No slide images or extra fields required!
+        </div>
+
+        <div class="file-drop-area" id="skuAsinDropArea" style="padding: 24px 16px; cursor: pointer;">
+          <span class="drop-icon" style="font-size: 32px;">📄</span>
+          <p style="margin: 6px 0;"><strong>Click or Drag & Drop your file here</strong> (.csv, .tsv, or .txt)</p>
+          <small style="color: #94a3b8;">Format: <code>sku,asin</code> or <code>asin,sku</code></small>
+          <input type="file" id="skuAsinFileInput" accept=".csv,.txt,.tsv" style="display: none;">
+        </div>
+
+        <div id="skuAsinFileInfo" class="file-info-bar" style="display: none; margin: 12px 0;">
+          <span id="skuAsinFileName" style="font-weight: 600;">file.csv</span>
+          <span class="badge-ready" style="font-size: 11px;">File Ready</span>
+        </div>
+
+        <div style="margin: 14px 0 6px;">
+          <label class="form-label" style="font-size: 12px; color: #94a3b8;">Or Paste SKU & ASIN Text Directly:</label>
+          <textarea id="skuAsinPasteText" class="form-input" rows="4" style="font-family: monospace; font-size: 12px;" placeholder="SKU-1, B08N5WRWNW&#10;SKU-2, B08N000002"></textarea>
+        </div>
+
+        <div class="download-tip" style="margin-top: 10px; font-size: 12px;">
+          Need a sample template? 
+          <a href="/api/download-sku-asin-template" download class="link" style="color: var(--amz-gold); text-decoration: underline;">
+            📥 Download Sample 2-Column Template (sku, asin)
+          </a>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancelSkuAsinModalBtn">Cancel</button>
+        <button class="btn btn-primary" id="submitSkuAsinBtn">
+          <span class="icon">📥</span> Import Listings
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="app.js"></script>
+</body>
+</html>

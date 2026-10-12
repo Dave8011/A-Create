@@ -1,0 +1,11 @@
+# Environment & Secrets
+.env
+.env.local
+
+# Dependencies
+node_modules/
+
+# Local Data & Uploads
+data/
+uploads/
+*.log
