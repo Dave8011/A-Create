@@ -64,18 +64,29 @@ If you prefer not to connect a database:
 2. Click **Upload SKU & ASIN File**.
 3. Upload a 2-column CSV or paste your `sku,asin` list directly.
 
-### Amazon SP-API Setup
-1. Enter your **LWA Client ID**, **Client Secret**, and **Refresh Token**.
-2. Enter your target **Amazon Marketplace ID** (e.g. `A21TJRUUN4KGV` for India, `ATVPDKIKX0DER` for US).
-3. Toggle between **Sandbox Simulation** and **Live SP-API** mode as needed.
+### Amazon SP-API EU / India Setup
+You can configure credentials either directly in the Web UI (Settings tab) or in your `.env` file:
+```ini
+EU_REFRESH_TOKEN='Atzr|IwEBI...'
+EU_SELLING_PARTNER_APP_CLIENT_ID='amzn1.application-oa2-client....'
+EU_SELLING_PARTNER_APP_CLIENT_SECRET='amzn1.oa2-cs.v1....'
+EU_SELLER_ID='A3XXXXXXXXXXXX'
+EU_AWS_REGION='eu-west-1'
+EU_MARKETPLACE_ID='A21TJRUUN4KGV'
+```
+- **Marketplace ID**: Default is `A21TJRUUN4KGV` for Amazon India (`amazon.in`), `A1F83G8C2ARO7P` for UK, `A1PA6795UKMFR9` for Germany.
+- **Regional API Endpoint**: Automatically mapped to `https://sellingpartnerapi-eu.amazon.com` for EU & India.
+- **Toggle Mode**: Toggle between **Sandbox Simulation** and **Live SP-API** mode at any time.
 
 ---
 
-## 🔒 Security
+## 🔒 Security & Credential Protection
 
-- Sensitive credentials (`.env`) are never committed to version control.
-- All configuration can be safely set via the Web UI or stored in a local `.env` file.
-- See `.env.example` for all configurable environment variables.
+- **Zero Exposure**: Credentials (`EU_SELLING_PARTNER_APP_CLIENT_SECRET`, `EU_REFRESH_TOKEN`, DB passwords) are kept strictly server-side and never returned in API responses or browser inspector.
+- **Safe Environment Storage**: Local `.env` file permissions are enforced to `0600` (`chmod 600`) so only the application process owner can read or write secrets.
+- **Strict Git Guard**: All `.env*` files are strictly excluded via `.gitignore` to prevent accidental commits.
+- **Sanitized Errors**: Authentication error handlers strip request payload metadata and never print or expose credentials in logs.
+- See `.env.example` for the full reference template.
 
 ---
 

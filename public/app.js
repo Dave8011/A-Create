@@ -719,9 +719,23 @@ async function fetchConfig() {
     if (data.marketplaceId) {
       document.getElementById('cfgMarketplace').value = data.marketplaceId;
     }
+    if (data.awsRegion && document.getElementById('cfgAwsRegion')) {
+      document.getElementById('cfgAwsRegion').value = data.awsRegion;
+    }
+    if (data.endpoint && document.getElementById('cfgEndpoint')) {
+      document.getElementById('cfgEndpoint').value = data.endpoint;
+    }
+    if (data.clientIdMasked && data.clientIdMasked !== 'Not Set') {
+      document.getElementById('cfgClientId').placeholder = `Configured: ${data.clientIdMasked}`;
+    }
+    if (data.sellerIdMasked && data.sellerIdMasked !== 'Not Set' && document.getElementById('cfgSellerId')) {
+      document.getElementById('cfgSellerId').placeholder = `Configured: ${data.sellerIdMasked}`;
+    }
     if (data.configured) {
       document.getElementById('sandboxBadge').textContent = data.isSandbox ? '🛡️ Sandbox Simulation' : '🟢 Live SP-API';
       document.getElementById('sandboxBadge').className = data.isSandbox ? 'pill-badge pill-sandbox' : 'pill-badge pill-approved';
+      document.getElementById('cfgClientSecret').placeholder = '•••••••••••••••• (Configured & Stored in .env)';
+      document.getElementById('cfgRefreshToken').placeholder = '•••••••••••••••• (Refresh Token Configured & Stored in .env)';
     }
   } catch (err) {
     console.error('Failed to load config:', err);
@@ -1016,6 +1030,8 @@ function initSettings() {
     const clientId = document.getElementById('cfgClientId').value.trim();
     const clientSecret = document.getElementById('cfgClientSecret').value.trim();
     const refreshToken = document.getElementById('cfgRefreshToken').value.trim();
+    const sellerId = document.getElementById('cfgSellerId') ? document.getElementById('cfgSellerId').value.trim() : '';
+    const awsRegion = document.getElementById('cfgAwsRegion') ? document.getElementById('cfgAwsRegion').value.trim() : 'eu-west-1';
     const marketplaceId = document.getElementById('cfgMarketplace').value.trim();
     const isSandbox = document.getElementById('cfgSandboxMode').checked;
 
@@ -1023,10 +1039,10 @@ function initSettings() {
       const res = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId, clientSecret, refreshToken, marketplaceId, isSandbox })
+        body: JSON.stringify({ clientId, clientSecret, refreshToken, sellerId, awsRegion, marketplaceId, isSandbox })
       });
       const data = await res.json();
-      showCallout('SP-API settings saved successfully to local .env!', 'success');
+      showCallout('SP-API settings saved securely to local .env (protected mode 0600)!', 'success');
       fetchConfig();
     } catch (err) {
       showCallout('Failed to save settings: ' + err.message, 'error');

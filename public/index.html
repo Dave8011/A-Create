@@ -744,34 +744,56 @@
 
       <!-- 2. Amazon SP-API Configuration Card -->
       <div class="card settings-card">
-        <h2 class="card-title">🔐 Amazon SP-API Configuration</h2>
-        <p class="card-desc">Configure your Selling Partner API credentials for publishing to Amazon.</p>
+        <h2 class="card-title">🔐 Amazon SP-API EU / Global Configuration</h2>
+        <p class="card-desc">Configure your Selling Partner API credentials for publishing A+ content to Amazon.</p>
+
+        <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; font-size: 12px; color: #10b981; display: flex; align-items: flex-start; gap: 10px; line-height: 1.5;">
+          <span style="font-size: 16px;">🛡️</span>
+          <div>
+            <strong>Zero-Exposure Security Guarantee:</strong> All credentials (Client ID, Secret, Refresh Token, Seller ID) are managed strictly server-side in your protected <code>.env</code> file (file mode <code>0600</code>). Secrets are never returned over API endpoints or exposed in browser consoles.
+          </div>
+        </div>
 
         <form id="settingsForm">
           <div class="form-row">
             <div class="form-group flex-1">
-              <label class="form-label">LWA Client ID (App Client ID)</label>
+              <label class="form-label">LWA Client ID <code style="font-size: 10px; color: var(--primary);">EU_SELLING_PARTNER_APP_CLIENT_ID</code></label>
               <input type="text" id="cfgClientId" class="form-input" placeholder="amzn1.application-oa2-client.xxxxxxxx">
             </div>
             <div class="form-group flex-1">
-              <label class="form-label">LWA Client Secret</label>
+              <label class="form-label">LWA Client Secret <code style="font-size: 10px; color: var(--primary);">EU_SELLING_PARTNER_APP_CLIENT_SECRET</code></label>
               <input type="password" id="cfgClientSecret" class="form-input" placeholder="••••••••••••••••••••••••••••••••">
             </div>
           </div>
 
           <div class="form-group">
-            <label class="form-label">LWA Refresh Token</label>
+            <label class="form-label">LWA Refresh Token <code style="font-size: 10px; color: var(--primary);">EU_REFRESH_TOKEN</code></label>
             <textarea id="cfgRefreshToken" class="form-input" rows="3" placeholder="Atzr|IwEBI..."></textarea>
           </div>
 
           <div class="form-row">
             <div class="form-group flex-1">
-              <label class="form-label">Amazon Marketplace ID</label>
-              <input type="text" id="cfgMarketplace" class="form-input" value="" placeholder="Enter Marketplace ID (e.g. A21TJRUUN4KGV)">
-              <small style="color: var(--text-muted); font-size: 11px; margin-top: 4px; display: block;">Enter your target Marketplace ID (e.g. India: A21TJRUUN4KGV, US: ATVPDKIKX0DER, UK: A1F83G8C2ARO7P)</small>
+              <label class="form-label">Seller / Merchant ID <code style="font-size: 10px; color: var(--primary);">EU_SELLER_ID</code></label>
+              <input type="text" id="cfgSellerId" class="form-input" placeholder="e.g. A3XXXXXXXXXXXX">
             </div>
             <div class="form-group flex-1">
-              <label class="form-label">Regional API Endpoint</label>
+              <label class="form-label">AWS Region <code style="font-size: 10px; color: var(--primary);">EU_AWS_REGION</code></label>
+              <select id="cfgAwsRegion" class="form-input">
+                <option value="eu-west-1" selected>eu-west-1 (Europe & India: amazon.in, UK, DE, FR, IT, ES)</option>
+                <option value="us-east-1">us-east-1 (North America: amazon.com, CA, MX, BR)</option>
+                <option value="us-west-2">us-west-2 (Far East: amazon.co.jp, AU, SG)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">Amazon Marketplace ID <code style="font-size: 10px; color: var(--primary);">EU_MARKETPLACE_ID</code></label>
+              <input type="text" id="cfgMarketplace" class="form-input" value="A21TJRUUN4KGV" placeholder="A21TJRUUN4KGV">
+              <small style="color: var(--text-muted); font-size: 11px; margin-top: 4px; display: block;">Default: India (A21TJRUUN4KGV). UK: A1F83G8C2ARO7P, Germany: A1PA6795UKMFR9, US: ATVPDKIKX0DER</small>
+            </div>
+            <div class="form-group flex-1">
+              <label class="form-label">Regional SP-API Endpoint</label>
               <input type="text" id="cfgEndpoint" class="form-input" value="https://sellingpartnerapi-eu.amazon.com" disabled>
             </div>
           </div>

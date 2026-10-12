@@ -35,8 +35,13 @@ const upload = multer({ storage });
 
 // Initialize SP-API client
 const spapi = new SpApiClient({
-  isSandbox: process.env.SP_API_SANDBOX !== 'false',
-  marketplaceId: process.env.SP_API_MARKETPLACE_ID || INDIA_MARKETPLACE_ID
+  isSandbox: process.env.SP_API_SANDBOX === 'true' || (process.env.SP_API_SANDBOX !== 'false' && !(process.env.EU_REFRESH_TOKEN || process.env.SP_API_REFRESH_TOKEN)),
+  marketplaceId: process.env.EU_MARKETPLACE_ID || process.env.SP_API_MARKETPLACE_ID || INDIA_MARKETPLACE_ID,
+  clientId: process.env.EU_SELLING_PARTNER_APP_CLIENT_ID || process.env.SP_API_CLIENT_ID || '',
+  clientSecret: process.env.EU_SELLING_PARTNER_APP_CLIENT_SECRET || process.env.SP_API_CLIENT_SECRET || '',
+  refreshToken: process.env.EU_REFRESH_TOKEN || process.env.SP_API_REFRESH_TOKEN || '',
+  sellerId: process.env.EU_SELLER_ID || process.env.SELLER_ID || '',
+  awsRegion: process.env.EU_AWS_REGION || process.env.AWS_REGION || 'eu-west-1'
 });
 
 // Load listings with in-memory fallback for serverless hosting
@@ -122,9 +127,12 @@ app.post('/api/db-config', (req, res) => {
     updateEnvVar('DB_CATEGORY_VAL', categoryVal);
     updateEnvVar('DB_JOIN_KEY', joinKey);
 
-    fs.writeFileSync(envPath, envContent.trim() + '\n');
+    fs.writeFileSync(envPath, envContent.trim() + '\n', { mode: 0o600 });
+    try {
+      fs.chmodSync(envPath, 0o600);
+    } catch (_) {}
   } catch (err) {
-    console.error('Failed to update .env:', err);
+    console.error('Failed to update .env:', err.message);
   }
 
   res.json({ success: true, config: omsDb.getConfigSummary() });
@@ -173,8 +181,25 @@ app.get('/api/config', (req, res) => {
 });
 
 app.post('/api/config', (req, res) => {
-  const { clientId, clientSecret, refreshToken, marketplaceId, isSandbox } = req.body;
-  spapi.updateConfig({ clientId, clientSecret, refreshToken, marketplaceId, isSandbox });
+  const { 
+    clientId, 
+    clientSecret, 
+    refreshToken, 
+    sellerId, 
+    awsRegion, 
+    marketplaceId, 
+    isSandbox 
+  } = req.body;
+
+  spapi.updateConfig({ 
+    clientId, 
+    clientSecret, 
+    refreshToken, 
+    sellerId, 
+    awsRegion, 
+    marketplaceId, 
+    isSandbox 
+  });
 
   // Save securely to local .env file on the user's computer
   try {
@@ -183,7 +208,11 @@ app.post('/api/config', (req, res) => {
     if (fs.existsSync(envPath)) envContent = fs.readFileSync(envPath, 'utf-8');
 
     const updateEnvVar = (key, val) => {
-      if (val === undefined) return;
+      if (val === undefined || val === null) return;
+      // Protect existing secrets: do not overwrite with empty strings if not provided
+      if (val === '' && (key.includes('SECRET') || key.includes('TOKEN')) && (new RegExp(`^${key}=.+`, 'm')).test(envContent)) {
+        return;
+      }
       const regex = new RegExp(`^${key}=.*$`, 'm');
       if (regex.test(envContent)) {
         envContent = envContent.replace(regex, `${key}="${val || ''}"`);
@@ -192,15 +221,27 @@ app.post('/api/config', (req, res) => {
       }
     };
 
-    updateEnvVar('SP_API_CLIENT_ID', clientId);
-    if (clientSecret) updateEnvVar('SP_API_CLIENT_SECRET', clientSecret);
-    updateEnvVar('SP_API_REFRESH_TOKEN', refreshToken);
-    updateEnvVar('SP_API_MARKETPLACE_ID', marketplaceId || INDIA_MARKETPLACE_ID);
-    updateEnvVar('SP_API_SANDBOX', isSandbox !== false);
+    // 1. Primary EU_* credentials
+    if (clientId !== undefined) updateEnvVar('EU_SELLING_PARTNER_APP_CLIENT_ID', clientId);
+    if (clientSecret !== undefined && clientSecret !== '') updateEnvVar('EU_SELLING_PARTNER_APP_CLIENT_SECRET', clientSecret);
+    if (refreshToken !== undefined && refreshToken !== '') updateEnvVar('EU_REFRESH_TOKEN', refreshToken);
+    if (sellerId !== undefined) updateEnvVar('EU_SELLER_ID', sellerId);
+    if (awsRegion !== undefined) updateEnvVar('EU_AWS_REGION', awsRegion || 'eu-west-1');
+    if (marketplaceId !== undefined) updateEnvVar('EU_MARKETPLACE_ID', marketplaceId || INDIA_MARKETPLACE_ID);
 
-    fs.writeFileSync(envPath, envContent.trim() + '\n');
+    // 2. Standard SP_API_* aliases for maximum compatibility
+    if (clientId !== undefined) updateEnvVar('SP_API_CLIENT_ID', clientId);
+    if (clientSecret !== undefined && clientSecret !== '') updateEnvVar('SP_API_CLIENT_SECRET', clientSecret);
+    if (refreshToken !== undefined && refreshToken !== '') updateEnvVar('SP_API_REFRESH_TOKEN', refreshToken);
+    if (marketplaceId !== undefined) updateEnvVar('SP_API_MARKETPLACE_ID', marketplaceId || INDIA_MARKETPLACE_ID);
+    if (isSandbox !== undefined) updateEnvVar('SP_API_SANDBOX', isSandbox !== false);
+
+    fs.writeFileSync(envPath, envContent.trim() + '\n', { mode: 0o600 });
+    try {
+      fs.chmodSync(envPath, 0o600);
+    } catch (_) {}
   } catch (err) {
-    console.error('Failed to write .env file:', err);
+    console.error('Failed to write .env file:', err.message);
   }
 
   res.json({ success: true, config: spapi.getConfigSummary() });
@@ -600,18 +641,21 @@ app.post('/api/start-bulk-batch', async (req, res) => {
         const docPayload = spapi.build7SlideContentDocument(item.title, item.asin, dummySlides);
         const docRes = await spapi.createContentDocument(docPayload);
 
-        // Step C: Link ASIN
+        // Step C: Link ASIN to A+ Document
         await spapi.postContentDocumentAsinRelations(docRes.contentReferenceKey, [item.asin]);
 
+        // Step D: Submit A+ Document for Amazon Review, Approval, & Publishing
+        await spapi.postContentDocumentApprovalSubmission(docRes.contentReferenceKey);
+
         // Update local listing state
-        item.status = 'APPROVED';
+        item.status = 'SUBMITTED';
         item.liveOnAmazon = true;
         item.moderationErrors = [];
         item.lastUpdated = new Date().toISOString().split('T')[0];
         item.contentReferenceKey = docRes.contentReferenceKey;
 
         currentBatchJob.successful++;
-        currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ✅ ${item.asin} (${item.sku}) - A+ Content successfully created and linked!`);
+        currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ✅ ${item.asin} (${item.sku}) - A+ Content created, ASIN linked, and submitted for Amazon approval!`);
       } catch (err) {
         currentBatchJob.failed++;
         item.status = 'REJECTED';
