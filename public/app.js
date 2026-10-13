@@ -700,22 +700,27 @@ function initSlideManager() {
 
   const localFolderInput = document.getElementById('localFolderInput');
   if (localFolderInput) {
-    localFolderInput.addEventListener('change', (e) => {
+    localFolderInput.addEventListener('change', async (e) => {
       const files = Array.from(e.target.files || []);
       if (files.length === 0) return;
+
+      const statusSpan = document.getElementById('loadLocalSlidesStatus');
+      if (statusSpan) {
+        statusSpan.textContent = `⏳ Optimizing slide graphics...`;
+        statusSpan.style.color = '#f59e0b';
+      }
 
       let loadedCount = 0;
       for (let i = 1; i <= 7; i++) {
         const regex = new RegExp(`^A\\+?\\s*${i}\\.(jpe?g|png)$|^Slide[-_ ]?${i}\\.(jpe?g|png)$|^0?${i}\\.(jpe?g|png)$`, 'i');
         const file = files.find(f => regex.test(f.name));
         if (file) {
-          handleFileSelect(i, file);
+          await handleFileSelect(i, file);
           loadedCount++;
         }
       }
-      const statusSpan = document.getElementById('loadLocalSlidesStatus');
       if (statusSpan) {
-        statusSpan.textContent = `✓ Loaded ${loadedCount} slides from folder!`;
+        statusSpan.textContent = `✓ Loaded & optimized ${loadedCount} slides! Ready to publish.`;
         statusSpan.style.color = '#10b981';
       }
     });
@@ -728,31 +733,109 @@ function initSlideManager() {
     if (asin && asin.trim()) {
       const cleanAsin = asin.trim().toUpperCase();
       const item = (state.allListings || state.loadedItems || []).find(i => i.asin === cleanAsin);
-      startBatch([cleanAsin], item ? [item] : null);
+      startBatch([cleanAsin], item ? [item] : null, true);
     }
   });
 }
 
-function handleFileSelect(slideNum, file) {
+/**
+ * Efficiently downscale and compress images client-side to ensure serverless request payloads stay < 4 MB
+ */
+function compressImageFile(file, maxWidth = 1464, maxHeight = 1080, quality = 0.82) {
+  return new Promise((resolve) => {
+    if (!file || !file.type.startsWith('image/')) {
+      return resolve({ dataBase64: null, size: 0, originalSize: file ? file.size : 0, width: 0, height: 0 });
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.naturalWidth || img.width;
+        let height = img.naturalHeight || img.height;
+
+        // Scale proportionally if larger than maximum allowable dimensions
+        if (width > maxWidth || height > maxHeight) {
+          const ratio = Math.min(maxWidth / width, maxHeight / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        // Clean white background in case of transparent PNGs
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const compressedBase64 = canvas.toDataURL('image/jpeg', quality);
+        const approxBytes = Math.round((compressedBase64.length * 3) / 4);
+
+        resolve({
+          dataBase64: compressedBase64,
+          width,
+          height,
+          size: approxBytes,
+          originalSize: file.size
+        });
+      };
+      img.onerror = () => {
+        // Fallback: If image cannot be rendered into canvas, return raw base64
+        resolve({
+          dataBase64: e.target.result,
+          width: 0,
+          height: 0,
+          size: file.size,
+          originalSize: file.size
+        });
+      };
+      img.src = e.target.result;
+    };
+    reader.onerror = () => {
+      resolve({ dataBase64: null, size: 0, originalSize: file ? file.size : 0, width: 0, height: 0 });
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function handleFileSelect(slideNum, file) {
   if (!state.uploadedSlides) state.uploadedSlides = {};
   const preview = document.getElementById(`preview${slideNum}`);
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    state.uploadedSlides[slideNum] = {
-      slideIndex: parseInt(slideNum, 10),
-      name: file.name,
-      size: file.size,
-      dataBase64: e.target.result
-    };
-    if (preview) {
-      preview.innerHTML = `
-        <img src="${e.target.result}" style="max-height:80px; max-width:100%; border-radius:4px; margin-bottom:4px;" alt="Slide ${slideNum}">
-        <p style="font-size:11px; color:#10b981; font-weight:600;">✓ ${file.name}</p>
-        <small style="color:#94a3b8;">${(file.size / 1024).toFixed(1)} KB</small>
-      `;
-    }
+  if (preview) {
+    preview.innerHTML = `
+      <div class="drop-placeholder">
+        <span class="drop-icon">⏳</span>
+        <p style="font-size:11px; color:#f59e0b;">Optimizing ${file.name}...</p>
+      </div>
+    `;
+  }
+
+  const tier = document.getElementById('aplusContentTier')?.value || 'PREMIUM';
+  const maxWidth = tier === 'PREMIUM' ? 1464 : 970;
+  const maxHeight = tier === 'PREMIUM' ? 1080 : 600;
+
+  const res = await compressImageFile(file, maxWidth, maxHeight, 0.82);
+
+  state.uploadedSlides[slideNum] = {
+    slideIndex: parseInt(slideNum, 10),
+    name: file.name,
+    size: res.size,
+    width: res.width,
+    height: res.height,
+    dataBase64: res.dataBase64
   };
-  reader.readAsDataURL(file);
+
+  if (preview && res.dataBase64) {
+    const origKb = (res.originalSize / 1024).toFixed(0);
+    const compKb = (res.size / 1024).toFixed(0);
+    preview.innerHTML = `
+      <img src="${res.dataBase64}" style="max-height:80px; max-width:100%; border-radius:4px; margin-bottom:4px;" alt="Slide ${slideNum}">
+      <p style="font-size:11px; color:#10b981; font-weight:600;">✓ ${file.name}</p>
+      <small style="color:#94a3b8;">${compKb} KB (optimized from ${origKb} KB, ${res.width}×${res.height})</small>
+    `;
+  }
 }
 
 // ==========================================================================
@@ -772,42 +855,90 @@ function initBulkQueue() {
   });
 }
 
-async function startBatch(asins = null, customItems = null) {
+async function startBatch(asins = null, customItems = null, includeClientSlides = false) {
   switchTab('queue-tab');
   const btn = document.getElementById('startBulkAllBtn');
   if (btn) btn.disabled = true;
 
-  // Resolve items to guarantee server receives full listing payload
+  // Resolve items to guarantee server receives minimal valid listing payload
   let itemsToSend = customItems;
   const catalog = state.allListings || state.loadedItems || [];
   if (!itemsToSend && asins && asins.length > 0) {
     itemsToSend = catalog.filter(i => asins.includes(i.asin));
   } else if (!itemsToSend && (!asins || asins.length === 0)) {
-    itemsToSend = catalog;
+    // If running bulk on entire catalog without preselection, send top 50
+    itemsToSend = catalog.slice(0, 50);
   }
 
-  // Check if client-uploaded slides exist (from 7-Slide Manager)
-  const clientSlides = (state.uploadedSlides && Object.keys(state.uploadedSlides).length > 0)
-    ? Object.values(state.uploadedSlides)
-    : undefined;
+  // Strip catalog items to minimal necessary payload (asin, sku, title)
+  if (itemsToSend && Array.isArray(itemsToSend)) {
+    itemsToSend = itemsToSend.map(i => ({
+      asin: i.asin,
+      sku: i.sku || `SKU-${i.asin}`,
+      title: i.title || i.asin
+    }));
+  }
+
+  // Determine whether to send client-uploaded slides (from 7-Slide Manager)
+  let clientSlides = undefined;
+  if (state.uploadedSlides && Object.keys(state.uploadedSlides).length > 0) {
+    // Only send slides if:
+    // 1) Explicitly asked (from Slide Manager "Publish to Target ASIN" button), OR
+    // 2) Processing a single ASIN that matches or is being pushed
+    const isSingleAsin = asins && asins.length === 1;
+    if (includeClientSlides || isSingleAsin) {
+      clientSlides = Object.values(state.uploadedSlides).map(s => ({
+        slideIndex: s.slideIndex,
+        name: s.name,
+        size: s.size,
+        dataBase64: s.dataBase64
+      }));
+    }
+  }
 
   const activeCreds = getActiveSpapiCredentials();
   const tier = document.getElementById('queueAplusTier')?.value || document.getElementById('aplusContentTier')?.value || 'PREMIUM';
   const premiumType = document.getElementById('premiumModuleTypeSelect')?.value || 'PREMIUM_IMAGE_TEXT';
 
+  const payloadObj = { 
+    asins, 
+    items: (itemsToSend && itemsToSend.length > 0) ? itemsToSend : undefined,
+    credentials: (activeCreds && activeCreds.clientId) ? activeCreds : undefined,
+    clientSlides,
+    tier,
+    premiumType
+  };
+
+  const payloadStr = JSON.stringify(payloadObj);
+
+  // Vercel hard request payload limit is 4.5 MB. Guard at 4.0 MB.
+  if (payloadStr.length > 4 * 1024 * 1024) {
+    const mb = (payloadStr.length / (1024 * 1024)).toFixed(1);
+    alert(`Payload is too large (${mb} MB). Serverless requests must stay below 4 MB. Please clear slides or re-upload smaller images.`);
+    if (btn) btn.disabled = false;
+    return;
+  }
+
   try {
     const res = await fetch('/api/start-bulk-batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        asins, 
-        items: (itemsToSend && itemsToSend.length > 0) ? itemsToSend : undefined,
-        credentials: (activeCreds && activeCreds.clientId) ? activeCreds : undefined,
-        clientSlides,
-        tier,
-        premiumType
-      })
+      body: payloadStr
     });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      let errMsg = errText;
+      try {
+        const errJson = JSON.parse(errText);
+        errMsg = errJson.message || errJson.error || errText;
+      } catch (_) {}
+      if (res.status === 413) {
+        errMsg = 'Payload Too Large (HTTP 413): The uploaded slide images exceed Vercel serverless request limits (4.5 MB).';
+      }
+      throw new Error(`HTTP ${res.status}: ${errMsg.substring(0, 300)}`);
+    }
+
     const data = await res.json();
 
     state.activeBatchJobId = data.jobId;
@@ -825,6 +956,7 @@ async function startBatch(asins = null, customItems = null) {
 async function pollBatchStatus() {
   try {
     const res = await fetch('/api/batch-status');
+    if (!res.ok) return;
     const job = await res.json();
 
     if (!job || job.status === 'IDLE') return;
