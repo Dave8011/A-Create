@@ -102,6 +102,38 @@ function createMinimalJpeg(width = 970, height = 600) {
   ]);
 }
 
+/**
+ * Construct RFC 7578 multipart/form-data Buffer without external dependencies
+ */
+function buildMultipartBuffer(fields, fileBuffer, fileName = 'image.jpg', contentType = 'image/jpeg', fileFieldName = 'file') {
+  const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+  const chunks = [];
+
+  for (const [key, value] of fields) {
+    chunks.push(Buffer.from(
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="${key}"\r\n\r\n` +
+      `${value}\r\n`
+    ));
+  }
+
+  // File must be the last field in S3 POST uploads
+  chunks.push(Buffer.from(
+    `--${boundary}\r\n` +
+    `Content-Disposition: form-data; name="${fileFieldName}"; filename="${fileName}"\r\n` +
+    `Content-Type: ${contentType}\r\n\r\n`
+  ));
+  chunks.push(fileBuffer);
+  chunks.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+
+  const body = Buffer.concat(chunks);
+  return {
+    body,
+    contentType: `multipart/form-data; boundary=${boundary}`,
+    contentLength: body.length
+  };
+}
+
 class SpApiClient {
   constructor(config = {}) {
     // Support EU_* environment variables first, falling back to standard SP_API_* names
@@ -498,7 +530,9 @@ class SpApiClient {
 
   /**
    * Upload binary image to Amazon's pre-signed S3 destination
-   * Supports both S3 multipart POST (Amazon Step 3c documentation) and pre-signed PUT requests
+   * Follows Amazon SP-API Step 3c documentation:
+   * S3 multipart form POST using URL query parameters as form fields and binary as the last field.
+   * Supports form-data package, native zero-dependency Buffer multipart fallback, and S3 pre-signed PUT.
    */
   async uploadImageBinary(uploadUrl, imageBuffer, headers = {}) {
     if (this.isSandbox) {
@@ -506,44 +540,77 @@ class SpApiClient {
       return { success: true };
     }
 
-    const FormData = require('form-data');
     let parsedUrl = null;
     try {
       parsedUrl = new URL(uploadUrl);
     } catch (_) {}
 
-    const hasFormPolicy = parsedUrl && (parsedUrl.searchParams.has('policy') || parsedUrl.searchParams.has('Policy') || parsedUrl.searchParams.has('x-amz-signature'));
+    const hasFormPolicy = parsedUrl && (
+      parsedUrl.searchParams.has('policy') ||
+      parsedUrl.searchParams.has('Policy') ||
+      parsedUrl.searchParams.has('x-amz-signature') ||
+      parsedUrl.searchParams.has('X-Amz-Signature')
+    );
 
-    // Step 3c: Try S3 multipart POST if URL includes policy / signature parameters
+    const contentType = (headers && (headers['Content-Type'] || headers['content-type'])) || 'image/jpeg';
+
+    // Step 3c: S3 multipart POST if URL includes policy / signature query parameters
     if (hasFormPolicy) {
-      try {
-        const formData = new FormData();
-        for (const [key, value] of parsedUrl.searchParams.entries()) {
-          formData.append(key, value);
-        }
-        // In Amazon S3 POST uploads, 'file' or 'File' must be the last field in multipart body
-        formData.append('file', imageBuffer, {
-          filename: 'image.jpg',
-          contentType: headers['Content-Type'] || 'image/jpeg'
-        });
+      const baseUrl = `${parsedUrl.origin}${parsedUrl.pathname}`;
+      const searchEntries = Array.from(parsedUrl.searchParams.entries());
 
-        const baseUrl = `${parsedUrl.origin}${parsedUrl.pathname}`;
-        await axios.post(baseUrl, formData, {
-          headers: {
-            ...formData.getHeaders()
-          },
-          maxBodyLength: Infinity,
-          maxContentLength: Infinity,
-          timeout: 30000
-        });
-        return { success: true };
+      // Attempt 1: Using form-data package if available
+      try {
+        let FormDataPackage = null;
+        try {
+          FormDataPackage = require('form-data');
+        } catch (_) {}
+
+        if (FormDataPackage) {
+          const form = new FormDataPackage();
+          for (const [key, value] of searchEntries) {
+            form.append(key, value);
+          }
+          form.append('file', imageBuffer, {
+            filename: 'image.jpg',
+            contentType
+          });
+
+          await axios.post(baseUrl, form, {
+            headers: {
+              ...form.getHeaders()
+            },
+            maxBodyLength: Infinity,
+            maxContentLength: Infinity,
+            timeout: 30000
+          });
+          return { success: true };
+        }
       } catch (postErr) {
-        // Continue to fallback PUT below
-        console.warn('S3 multipart form POST failed, attempting pre-signed PUT fallback:', postErr.message);
+        console.warn('form-data package POST upload failed, trying native Buffer multipart:', postErr.message);
+      }
+
+      // Attempt 2: Zero-dependency pure Buffer multipart POST (tries 'file', then 'File')
+      for (const fieldName of ['file', 'File']) {
+        try {
+          const mp = buildMultipartBuffer(searchEntries, imageBuffer, 'image.jpg', contentType, fieldName);
+          await axios.post(baseUrl, mp.body, {
+            headers: {
+              'Content-Type': mp.contentType,
+              'Content-Length': mp.contentLength
+            },
+            maxBodyLength: Infinity,
+            maxContentLength: Infinity,
+            timeout: 30000
+          });
+          return { success: true };
+        } catch (mpErr) {
+          console.warn(`Buffer multipart POST (fieldName: ${fieldName}) failed:`, mpErr.message);
+        }
       }
     }
 
-    // Pre-signed S3 PUT upload
+    // Attempt 3: Fallback to S3 pre-signed PUT upload
     let putHeaders = {};
     if (headers && typeof headers === 'object') {
       if (Array.isArray(headers)) {
@@ -555,6 +622,9 @@ class SpApiClient {
       }
     }
     putHeaders['Content-Length'] = imageBuffer.length;
+    if (!putHeaders['Content-Type']) {
+      putHeaders['Content-Type'] = contentType;
+    }
     // S3 pre-signed URLs must not carry SP-API auth tokens
     delete putHeaders['x-amz-access-token'];
     delete putHeaders['Authorization'];
