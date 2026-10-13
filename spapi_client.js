@@ -41,6 +41,36 @@ const KNOWN_MARKETPLACES = {
   'A39IBJ37TRP1C6': 'Amazon Australia (amazon.com.au)'
 };
 
+// Official Selling Partner API endpoint by Marketplace ID
+const MARKETPLACE_TO_ENDPOINT = {
+  // Europe & India (https://sellingpartnerapi-eu.amazon.com)
+  'A21TJRUUN4KGV': REGIONS.eu, // India (amazon.in)
+  'A1F83G8C2ARO7P': REGIONS.eu, // UK (amazon.co.uk)
+  'A1PA6795UKMFR9': REGIONS.eu, // Germany (amazon.de)
+  'A13V1IB3VIYZZH': REGIONS.eu, // France (amazon.fr)
+  'APJ6JRA9NG5V4': REGIONS.eu, // Italy (amazon.it)
+  'A1RKKUPIHCS9HS': REGIONS.eu, // Spain (amazon.es)
+  'A1805IZSGTT6HS': REGIONS.eu, // Netherlands (amazon.nl)
+  'A2NODRKZP88ZB9': REGIONS.eu, // Sweden (amazon.se)
+  'A1C3SOZRARQ6R3': REGIONS.eu, // Poland (amazon.pl)
+  'A2VIGQ35RCS4UG': REGIONS.eu, // UAE (amazon.ae)
+  'A17E79C6D8DWNP': REGIONS.eu, // Saudi Arabia (amazon.sa)
+  'ARBP9OOSHTCHU': REGIONS.eu, // Egypt (amazon.eg)
+  'A33AVAJ2PDY3EV': REGIONS.eu, // Turkey (amazon.com.tr)
+  'AMPE7NPUBHTYO': REGIONS.eu, // South Africa (amazon.co.za)
+
+  // North America (https://sellingpartnerapi-na.amazon.com)
+  'ATVPDKIKX0DER': REGIONS.na, // US (amazon.com)
+  'A2EUQ1WTGCTBG2': REGIONS.na, // Canada (amazon.ca)
+  'A1AM78C64UM0Y8': REGIONS.na, // Mexico (amazon.com.mx)
+  'A2Q3Y263D00KWC': REGIONS.na, // Brazil (amazon.com.br)
+
+  // Far East (https://sellingpartnerapi-fe.amazon.com)
+  'A1VC38T7YXB528': REGIONS.fe, // Japan (amazon.co.jp)
+  'A39IBJ37TRP1C6': REGIONS.fe, // Australia (amazon.com.au)
+  'A19VAU5U5O7RUS': REGIONS.fe  // Singapore (amazon.sg)
+};
+
 const INDIA_MARKETPLACE_ID = 'A21TJRUUN4KGV';
 
 function cleanValue(val) {
@@ -79,10 +109,13 @@ class SpApiClient {
     this.clientSecret = cleanValue(config.clientSecret || process.env.EU_SELLING_PARTNER_APP_CLIENT_SECRET || process.env.SP_API_CLIENT_SECRET);
     this.refreshToken = cleanValue(config.refreshToken || process.env.EU_REFRESH_TOKEN || process.env.SP_API_REFRESH_TOKEN);
     this.sellerId = cleanValue(config.sellerId || process.env.EU_SELLER_ID || process.env.SELLER_ID);
-    this.awsRegion = cleanValue(config.awsRegion || process.env.EU_AWS_REGION || process.env.AWS_REGION || 'eu-west-1');
     this.marketplaceId = cleanValue(config.marketplaceId || process.env.EU_MARKETPLACE_ID || process.env.SP_API_MARKETPLACE_ID || INDIA_MARKETPLACE_ID);
+
+    // Explicit SP-API region: NEVER use process.env.AWS_REGION (which Vercel / AWS Lambda hosting sets to us-east-1!)
+    this.awsRegion = cleanValue(config.awsRegion || process.env.EU_AWS_REGION || process.env.SP_API_AWS_REGION || 'eu-west-1');
     
-    this.endpoint = config.endpoint || REGION_BY_AWS_REGION[this.awsRegion.toLowerCase()] || REGIONS.eu;
+    // Automatically bind the correct endpoint based on target Amazon Marketplace ID
+    this.endpoint = config.endpoint || MARKETPLACE_TO_ENDPOINT[this.marketplaceId] || REGION_BY_AWS_REGION[this.awsRegion.toLowerCase()] || REGIONS.eu;
     this.isSandbox = config.isSandbox !== undefined ? config.isSandbox : (process.env.SP_API_SANDBOX === 'true' || (process.env.SP_API_SANDBOX !== 'false' && !this.clientId));
 
     this.cachedToken = null;
@@ -94,11 +127,18 @@ class SpApiClient {
     if (config.clientSecret !== undefined && config.clientSecret !== '') this.clientSecret = cleanValue(config.clientSecret);
     if (config.refreshToken !== undefined && config.refreshToken !== '') this.refreshToken = cleanValue(config.refreshToken);
     if (config.sellerId !== undefined && config.sellerId !== '') this.sellerId = cleanValue(config.sellerId);
+    if (config.marketplaceId !== undefined && config.marketplaceId !== '') {
+      this.marketplaceId = cleanValue(config.marketplaceId);
+      if (!config.endpoint) {
+        this.endpoint = MARKETPLACE_TO_ENDPOINT[this.marketplaceId] || this.endpoint;
+      }
+    }
     if (config.awsRegion !== undefined && config.awsRegion !== '') {
       this.awsRegion = cleanValue(config.awsRegion);
-      this.endpoint = REGION_BY_AWS_REGION[this.awsRegion.toLowerCase()] || REGIONS.eu;
+      if (!config.endpoint && !MARKETPLACE_TO_ENDPOINT[this.marketplaceId]) {
+        this.endpoint = REGION_BY_AWS_REGION[this.awsRegion.toLowerCase()] || REGIONS.eu;
+      }
     }
-    if (config.marketplaceId !== undefined && config.marketplaceId !== '') this.marketplaceId = cleanValue(config.marketplaceId);
     if (config.endpoint !== undefined && config.endpoint !== '') this.endpoint = config.endpoint;
     if (config.isSandbox !== undefined) this.isSandbox = Boolean(config.isSandbox);
     this.cachedToken = null;

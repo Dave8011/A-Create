@@ -42,7 +42,7 @@ const spapi = new SpApiClient({
   clientSecret: process.env.EU_SELLING_PARTNER_APP_CLIENT_SECRET || process.env.SP_API_CLIENT_SECRET || '',
   refreshToken: process.env.EU_REFRESH_TOKEN || process.env.SP_API_REFRESH_TOKEN || '',
   sellerId: process.env.EU_SELLER_ID || process.env.SELLER_ID || '',
-  awsRegion: process.env.EU_AWS_REGION || process.env.AWS_REGION || 'eu-west-1'
+  awsRegion: process.env.EU_AWS_REGION || process.env.SP_API_AWS_REGION || 'eu-west-1'
 });
 
 // Load listings with in-memory fallback for serverless hosting
