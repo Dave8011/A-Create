@@ -332,8 +332,9 @@ function renderTable(items) {
   document.querySelectorAll('.update-single-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const asin = btn.getAttribute('data-asin');
+      const item = (state.allListings || state.loadedItems || []).find(i => i.asin === asin);
       if (confirm(`Push the 7-Slide A+ Content to ${asin} on amazon.in?`)) {
-        await startBatch([asin]);
+        await startBatch([asin], item ? [item] : null);
       }
     });
   });
@@ -421,9 +422,13 @@ function initTableEvents() {
   // Batch selected
   document.getElementById('batchSelectedBtn').addEventListener('click', () => {
     const asins = Array.from(state.selectedAsins);
-    if (asins.length === 0) return;
+    if (asins.length === 0) {
+      alert('Please select at least one ASIN from the table checkboxes first.');
+      return;
+    }
+    const selectedItems = (state.allListings || state.loadedItems || []).filter(i => asins.includes(i.asin));
     if (confirm(`Start bulk A+ update for ${asins.length} selected listings?`)) {
-      startBatch(asins);
+      startBatch(asins, selectedItems);
     }
   });
 
@@ -520,7 +525,9 @@ function initSlideManager() {
   document.getElementById('applyToAsinBtn').addEventListener('click', () => {
     const asin = prompt('Enter target ASIN for this 7-Slide A+ stack (e.g. B0...):');
     if (asin && asin.trim()) {
-      startBatch([asin.trim().toUpperCase()]);
+      const cleanAsin = asin.trim().toUpperCase();
+      const item = (state.allListings || state.loadedItems || []).find(i => i.asin === cleanAsin);
+      startBatch([cleanAsin], item ? [item] : null);
     }
   });
 }
@@ -555,16 +562,28 @@ function initBulkQueue() {
   });
 }
 
-async function startBatch(asins = null) {
+async function startBatch(asins = null, customItems = null) {
   switchTab('queue-tab');
   const btn = document.getElementById('startBulkAllBtn');
-  btn.disabled = true;
+  if (btn) btn.disabled = true;
+
+  // Resolve items to guarantee server receives full listing payload
+  let itemsToSend = customItems;
+  const catalog = state.allListings || state.loadedItems || [];
+  if (!itemsToSend && asins && asins.length > 0) {
+    itemsToSend = catalog.filter(i => asins.includes(i.asin));
+  } else if (!itemsToSend && (!asins || asins.length === 0)) {
+    itemsToSend = catalog;
+  }
 
   try {
     const res = await fetch('/api/start-bulk-batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ asins })
+      body: JSON.stringify({ 
+        asins, 
+        items: (itemsToSend && itemsToSend.length > 0) ? itemsToSend : undefined 
+      })
     });
     const data = await res.json();
 
@@ -576,7 +595,7 @@ async function startBatch(asins = null) {
     state.batchPollInterval = setInterval(pollBatchStatus, 400);
   } catch (err) {
     alert('Failed to start batch: ' + err.message);
-    btn.disabled = false;
+    if (btn) btn.disabled = false;
   }
 }
 

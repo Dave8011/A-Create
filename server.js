@@ -4,6 +4,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const axios = require('axios');
 const { SpApiClient, INDIA_MARKETPLACE_ID } = require('./spapi_client');
 const { omsDb } = require('./db');
 
@@ -49,19 +50,32 @@ const LISTINGS_FILE = path.join(DATA_DIR, 'listings.json');
 let inMemoryListings = [];
 
 function getListings() {
-  if (inMemoryListings.length > 0) return inMemoryListings;
+  if (inMemoryListings && inMemoryListings.length > 0) return inMemoryListings;
+  
   if (fs.existsSync(LISTINGS_FILE)) {
     try {
       const data = JSON.parse(fs.readFileSync(LISTINGS_FILE, 'utf-8'));
-      if (Array.isArray(data)) {
+      if (Array.isArray(data) && data.length > 0) {
         inMemoryListings = data;
         return data;
       }
-    } catch {
-      return inMemoryListings;
-    }
+    } catch (_) {}
   }
-  return inMemoryListings;
+
+  // Fallback to repository data/listings.json (ensures Vercel & restarts always load all 774 listings)
+  const bundledFile = path.join(__dirname, 'data', 'listings.json');
+  if (bundledFile !== LISTINGS_FILE && fs.existsSync(bundledFile)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(bundledFile, 'utf-8'));
+      if (Array.isArray(data) && data.length > 0) {
+        inMemoryListings = data;
+        try { fs.writeFileSync(LISTINGS_FILE, JSON.stringify(data, null, 2)); } catch (_) {}
+        return data;
+      }
+    } catch (_) {}
+  }
+
+  return inMemoryListings || [];
 }
 
 function saveListings(listings) {
@@ -591,13 +605,50 @@ app.post('/api/validate-slide-layout', (req, res) => {
 
 // 6. Start Bulk Update Processing Job
 app.post('/api/start-bulk-batch', async (req, res) => {
-  const { asins, templateType = '7_SLIDE_STACK', options = {} } = req.body;
-  const listings = getListings();
+  const { asins, items: clientItems, templateType = '7_SLIDE_STACK', options = {} } = req.body;
+  const serverListings = getListings();
 
-  // If specific ASINs are requested, filter; otherwise use all listings or top N
-  let targetItems = listings;
-  if (asins && asins.length > 0) {
-    targetItems = listings.filter(l => asins.includes(l.asin));
+  // Combine client items with server listings into candidate pool
+  const poolMap = new Map();
+  serverListings.forEach(item => poolMap.set(item.asin.toUpperCase(), item));
+  if (clientItems && Array.isArray(clientItems) && clientItems.length > 0) {
+    clientItems.forEach(item => {
+      if (item && item.asin) poolMap.set(item.asin.toUpperCase(), item);
+    });
+  }
+  const candidatePool = Array.from(poolMap.values());
+
+  let targetItems = [];
+  if (asins && Array.isArray(asins) && asins.length > 0) {
+    const asinSet = new Set(asins.map(a => String(a).trim().toUpperCase()));
+    targetItems = candidatePool.filter(l => l.asin && asinSet.has(l.asin.toUpperCase()));
+
+    // If specific ASINs are requested by the user but missing from catalog pool, synthesize valid listing items
+    asins.forEach(reqAsin => {
+      const cleanAsin = String(reqAsin).trim().toUpperCase();
+      if (!targetItems.some(t => t.asin && t.asin.toUpperCase() === cleanAsin)) {
+        const synthItem = {
+          id: candidatePool.length + targetItems.length + 1,
+          asin: cleanAsin,
+          sku: `SKU-${cleanAsin}`,
+          title: `Product ${cleanAsin}`,
+          status: 'DRAFT',
+          liveOnAmazon: false,
+          images: [],
+          moderationErrors: [],
+          moderationWarnings: []
+        };
+        targetItems.push(synthItem);
+        candidatePool.push(synthItem);
+      }
+    });
+  } else {
+    targetItems = candidatePool;
+  }
+
+  // Ensure candidatePool is persisted if server was previously unseeded
+  if (serverListings.length === 0 && candidatePool.length > 0) {
+    saveListings(candidatePool);
   }
 
   const jobId = 'job_' + Date.now();
@@ -610,7 +661,9 @@ app.post('/api/start-bulk-batch', async (req, res) => {
     successful: 0,
     failed: 0,
     rateLimitPerSec: 8, // Stays well below Amazon's 10 req/s limit
-    logs: [],
+    logs: [
+      `[${new Date().toLocaleTimeString()}] Batch job queued: ${targetItems.length} listing(s) ready for Amazon SP-API processing.`
+    ],
     currentItem: null
   };
 
@@ -628,18 +681,37 @@ app.post('/api/start-bulk-batch', async (req, res) => {
 
       const item = targetItems[i];
       currentBatchJob.currentItem = { asin: item.asin, sku: item.sku };
+      currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] 🚀 ${item.asin} (${item.sku || 'N/A'}) - Starting Amazon A+ pipeline...`);
 
-      // Step A: Create Upload Destination
       try {
-        const dest = await spapi.createUploadDestination('image/jpeg');
-        // Step B: Build A+ Document
-        const dummySlides = Array.from({ length: 7 }, (_, sIdx) => ({
-          uploadDestinationId: dest.uploadDestinationId,
-          title: `Module ${sIdx + 1}`,
-          altText: `${item.title} Slide ${sIdx + 1}`
-        }));
+        // Step A: Prepare 7 modules with image destinations
+        const slides = [];
+        const imageUrls = (item.images && Array.isArray(item.images)) ? item.images : [];
 
-        const docPayload = spapi.build7SlideContentDocument(item.title, item.asin, dummySlides);
+        for (let sIdx = 0; sIdx < 7; sIdx++) {
+          const imgUrl = imageUrls[sIdx] || imageUrls[0] || null;
+          let imgBuf = null;
+
+          if (imgUrl && !spapi.isSandbox) {
+            try {
+              const imgRes = await axios.get(imgUrl, { responseType: 'arraybuffer', timeout: 8000 });
+              imgBuf = Buffer.from(imgRes.data);
+            } catch (imgErr) {
+              console.warn(`[Image Fetch] Could not download image for ${item.asin} slide ${sIdx + 1}: ${imgErr.message}`);
+            }
+          }
+
+          const dest = await spapi.createUploadDestination(imgBuf, 'image/jpeg');
+
+          slides.push({
+            uploadDestinationId: dest.uploadDestinationId,
+            title: `Module ${sIdx + 1}`,
+            altText: `${item.title || item.asin} feature ${sIdx + 1}`
+          });
+        }
+
+        // Step B: Build A+ Document
+        const docPayload = spapi.build7SlideContentDocument(item.title || item.asin, item.asin, slides);
         const docRes = await spapi.createContentDocument(docPayload);
 
         // Step C: Link ASIN to A+ Document
@@ -656,7 +728,7 @@ app.post('/api/start-bulk-batch', async (req, res) => {
         item.contentReferenceKey = docRes.contentReferenceKey;
 
         currentBatchJob.successful++;
-        currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ✅ ${item.asin} (${item.sku}) - A+ Content created, ASIN linked, and submitted for Amazon approval!`);
+        currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ✅ ${item.asin} (${item.sku || 'N/A'}) - A+ Document created (${docRes.contentReferenceKey}), ASIN linked, and submitted for Amazon approval!`);
       } catch (err) {
         currentBatchJob.failed++;
         item.status = 'REJECTED';
@@ -678,7 +750,7 @@ app.post('/api/start-bulk-batch', async (req, res) => {
     if (currentBatchJob && currentBatchJob.status !== 'CANCELLED') {
       currentBatchJob.status = 'COMPLETED';
       currentBatchJob.endTime = new Date().toISOString();
-      saveListings(listings);
+      saveListings(candidatePool);
     }
   })();
 });

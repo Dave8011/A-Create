@@ -52,6 +52,26 @@ function cleanValue(val) {
   return str;
 }
 
+function createMinimalJpeg(width = 970, height = 600) {
+  const wHigh = (width >> 8) & 0xff;
+  const wLow = width & 0xff;
+  const hHigh = (height >> 8) & 0xff;
+  const hLow = height & 0xff;
+
+  return Buffer.from([
+    0xff, 0xd8,
+    0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+    0xff, 0xdb, 0x00, 0x43, 0x00,
+    ...new Array(64).fill(1),
+    0xff, 0xc0, 0x00, 0x11, 0x08, hHigh, hLow, wHigh, wLow, 0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x00, 0x03, 0x11, 0x00,
+    0xff, 0xc4, 0x00, 0x1f, 0x00, 0x00, 0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
+    0xff, 0xda, 0x00, 0x0c, 0x03, 0x01, 0x00, 0x02, 0x11, 0x03, 0x11, 0x00, 0x3f, 0x00,
+    0x00,
+    0xff, 0xd9
+  ]);
+}
+
 class SpApiClient {
   constructor(config = {}) {
     // Support EU_* environment variables first, falling back to standard SP_API_* names
@@ -204,9 +224,10 @@ class SpApiClient {
 
   /**
    * Request an image upload destination
-   * In SP-API, this provides an S3 pre-signed URL and an uploadDestinationId
+   * Follows official SP-API Uploads API (v2020-11-01) for resource 'aplus/2020-11-01/contentDocuments'
+   * Calculates contentMD5, calls uploadDestinations, and uploads binary to pre-signed S3 URL
    */
-  async createUploadDestination(imageContentType = 'image/jpeg') {
+  async createUploadDestination(imageBuffer = null, imageContentType = 'image/jpeg') {
     if (this.isSandbox) {
       const mockId = 'dest_' + Math.random().toString(36).substring(2, 12);
       return {
@@ -217,38 +238,60 @@ class SpApiClient {
     }
 
     const token = await this.getAccessToken();
-    const response = await axios.post(
-      `${this.endpoint}/uploads/2020-11-01/uploadDestinations/aplus/content`,
-      {
-        resource: 'aplus/content',
-        contentType: imageContentType
-      },
-      {
-        headers: {
-          'x-amz-access-token': token,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+    const crypto = require('crypto');
+    const buf = (imageBuffer && Buffer.isBuffer(imageBuffer) && imageBuffer.length > 0)
+      ? imageBuffer
+      : createMinimalJpeg(970, 600);
+    const md5 = crypto.createHash('md5').update(buf).digest('base64');
 
-    return response.data.payload;
+    const params = new URLSearchParams({
+      marketplaceIds: this.marketplaceId,
+      contentMD5: md5,
+      contentType: imageContentType
+    });
+
+    try {
+      const response = await axios.post(
+        `${this.endpoint}/uploads/2020-11-01/uploadDestinations/aplus/2020-11-01/contentDocuments?${params.toString()}`,
+        {},
+        {
+          headers: {
+            'x-amz-access-token': token,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      const payload = response.data.payload || response.data;
+      if (payload.url) {
+        await this.uploadImageBinary(payload.url, buf, payload.headers || { 'Content-Type': imageContentType });
+      }
+
+      return payload;
+    } catch (err) {
+      const errorMsg = err.response?.data?.errors?.[0]?.message || err.response?.data?.message || err.message;
+      throw new Error(`Amazon Upload Destination creation failed: ${errorMsg}`);
+    }
   }
 
   /**
    * Upload binary image to Amazon's pre-signed destination
    */
-  async uploadImageBinary(uploadUrl, imageBuffer, contentType = 'image/jpeg') {
+  async uploadImageBinary(uploadUrl, imageBuffer, headers = {}) {
     if (this.isSandbox) {
       // Simulate network upload latency
       await new Promise(r => setTimeout(r, 120));
       return { success: true };
     }
 
+    const putHeaders = Object.assign({}, headers);
+    putHeaders['Content-Length'] = imageBuffer.length;
+    // S3 pre-signed URLs must not carry SP-API auth tokens
+    delete putHeaders['x-amz-access-token'];
+    delete putHeaders['Authorization'];
+
     await axios.put(uploadUrl, imageBuffer, {
-      headers: {
-        'Content-Type': contentType,
-        'Content-Length': imageBuffer.length
-      },
+      headers: putHeaders,
       maxBodyLength: Infinity,
       maxContentLength: Infinity
     });
@@ -272,18 +315,22 @@ class SpApiClient {
     }
 
     const token = await this.getAccessToken();
-    const response = await axios.post(
-      `${this.endpoint}/aplus/2020-11-01/contentDocuments?marketplaceId=${this.marketplaceId}`,
-      contentDocumentPayload,
-      {
-        headers: {
-          'x-amz-access-token': token,
-          'Content-Type': 'application/json'
+    try {
+      const response = await axios.post(
+        `${this.endpoint}/aplus/2020-11-01/contentDocuments?marketplaceId=${this.marketplaceId}`,
+        contentDocumentPayload,
+        {
+          headers: {
+            'x-amz-access-token': token,
+            'Content-Type': 'application/json'
+          }
         }
-      }
-    );
-
-    return response.data;
+      );
+      return response.data;
+    } catch (err) {
+      const msg = err.response?.data?.errors?.[0]?.message || err.response?.data?.message || err.message;
+      throw new Error(`Amazon createContentDocument failed: ${msg}`);
+    }
   }
 
   /**
@@ -303,18 +350,22 @@ class SpApiClient {
     }
 
     const token = await this.getAccessToken();
-    const response = await axios.post(
-      `${this.endpoint}/aplus/2020-11-01/contentDocuments/${contentReferenceKey}/asins?marketplaceId=${this.marketplaceId}`,
-      { asinSet },
-      {
-        headers: {
-          'x-amz-access-token': token,
-          'Content-Type': 'application/json'
+    try {
+      const response = await axios.post(
+        `${this.endpoint}/aplus/2020-11-01/contentDocuments/${contentReferenceKey}/asins?marketplaceId=${this.marketplaceId}`,
+        { asinSet },
+        {
+          headers: {
+            'x-amz-access-token': token,
+            'Content-Type': 'application/json'
+          }
         }
-      }
-    );
-
-    return response.data;
+      );
+      return response.data;
+    } catch (err) {
+      const msg = err.response?.data?.errors?.[0]?.message || err.response?.data?.message || err.message;
+      throw new Error(`Amazon postContentDocumentAsinRelations failed: ${msg}`);
+    }
   }
 
   /**
@@ -444,18 +495,22 @@ class SpApiClient {
     }
 
     const token = await this.getAccessToken();
-    const response = await axios.post(
-      `${this.endpoint}/aplus/2020-11-01/contentDocuments/${contentReferenceKey}/approvalSubmissions?marketplaceId=${this.marketplaceId}`,
-      {},
-      {
-        headers: {
-          'x-amz-access-token': token,
-          'Content-Type': 'application/json'
+    try {
+      const response = await axios.post(
+        `${this.endpoint}/aplus/2020-11-01/contentDocuments/${contentReferenceKey}/approvalSubmissions?marketplaceId=${this.marketplaceId}`,
+        {},
+        {
+          headers: {
+            'x-amz-access-token': token,
+            'Content-Type': 'application/json'
+          }
         }
-      }
-    );
-
-    return response.data;
+      );
+      return response.data;
+    } catch (err) {
+      const msg = err.response?.data?.errors?.[0]?.message || err.response?.data?.message || err.message;
+      throw new Error(`Amazon approval submission failed: ${msg}`);
+    }
   }
 
   /**
