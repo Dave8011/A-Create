@@ -14,11 +14,149 @@ const state = {
   selectedAsins: new Set(),
   activeBatchJobId: null,
   batchPollInterval: null,
-  currentModalAsin: null
+  currentModalAsin: null,
+  uploadedSlides: {}
 };
+
+// LocalStorage Persistence Keys
+const STORAGE_KEYS = {
+  SPAPI: 'aplus_spapi_credentials',
+  DB: 'aplus_db_credentials'
+};
+
+function saveCredentialsToStorage() {
+  try {
+    const prevSpapi = JSON.parse(localStorage.getItem(STORAGE_KEYS.SPAPI) || '{}');
+    const clientId = document.getElementById('cfgClientId')?.value?.trim();
+    const clientSecret = document.getElementById('cfgClientSecret')?.value?.trim();
+    const refreshToken = document.getElementById('cfgRefreshToken')?.value?.trim();
+    const sellerId = document.getElementById('cfgSellerId')?.value?.trim();
+    const awsRegion = document.getElementById('cfgAwsRegion')?.value?.trim();
+    const marketplaceId = document.getElementById('cfgMarketplace')?.value?.trim();
+    const isSandbox = document.getElementById('cfgSandboxMode') ? document.getElementById('cfgSandboxMode').checked : false;
+    const assetsDir = document.getElementById('cfgAssetsDir')?.value?.trim();
+
+    const spapiData = {
+      clientId: (clientId !== undefined && clientId !== '') ? clientId : (prevSpapi.clientId || ''),
+      clientSecret: (clientSecret && !clientSecret.startsWith('•')) ? clientSecret : (prevSpapi.clientSecret || ''),
+      refreshToken: (refreshToken && !refreshToken.startsWith('•')) ? refreshToken : (prevSpapi.refreshToken || ''),
+      sellerId: (sellerId !== undefined && sellerId !== '') ? sellerId : (prevSpapi.sellerId || ''),
+      awsRegion: awsRegion || prevSpapi.awsRegion || 'eu-west-1',
+      marketplaceId: marketplaceId || prevSpapi.marketplaceId || 'A21TJRUUN4KGV',
+      isSandbox,
+      assetsDir: assetsDir || prevSpapi.assetsDir || '/home/dave/Desktop'
+    };
+    localStorage.setItem(STORAGE_KEYS.SPAPI, JSON.stringify(spapiData));
+
+    // DB credentials
+    const prevDb = JSON.parse(localStorage.getItem(STORAGE_KEYS.DB) || '{}');
+    const host = document.getElementById('cfgDbHost')?.value?.trim();
+    const port = document.getElementById('cfgDbPort')?.value?.trim();
+    const user = document.getElementById('cfgDbUser')?.value?.trim();
+    const password = document.getElementById('cfgDbPassword')?.value;
+    const database = document.getElementById('cfgDbName')?.value?.trim();
+    const amazonTable = document.getElementById('cfgDbAmazonTable')?.value?.trim();
+    const productsTable = document.getElementById('cfgDbProductsTable')?.value?.trim();
+    const marketplaceCol = document.getElementById('cfgDbMarketplaceCol')?.value?.trim();
+    const marketplaceVal = document.getElementById('cfgDbMarketplaceVal')?.value?.trim();
+    const categoryCol = document.getElementById('cfgDbCategoryCol')?.value?.trim();
+    const categoryVal = document.getElementById('cfgDbCategoryVal')?.value?.trim();
+    const amzJoinKey = document.getElementById('cfgDbAmzJoinKey')?.value?.trim();
+    const prodJoinKey = document.getElementById('cfgDbProdJoinKey')?.value?.trim();
+
+    const dbData = {
+      host: (host !== undefined && host !== '') ? host : (prevDb.host || ''),
+      port: (port !== undefined && port !== '') ? port : (prevDb.port || '3306'),
+      user: (user !== undefined && user !== '') ? user : (prevDb.user || ''),
+      password: (password && !password.startsWith('•')) ? password : (prevDb.password || ''),
+      database: (database !== undefined && database !== '') ? database : (prevDb.database || ''),
+      amazonTable: (amazonTable !== undefined && amazonTable !== '') ? amazonTable : (prevDb.amazonTable || ''),
+      productsTable: (productsTable !== undefined && productsTable !== '') ? productsTable : (prevDb.productsTable || ''),
+      marketplaceCol: (marketplaceCol !== undefined && marketplaceCol !== '') ? marketplaceCol : (prevDb.marketplaceCol || ''),
+      marketplaceVal: (marketplaceVal !== undefined && marketplaceVal !== '') ? marketplaceVal : (prevDb.marketplaceVal || ''),
+      categoryCol: (categoryCol !== undefined && categoryCol !== '') ? categoryCol : (prevDb.categoryCol || ''),
+      categoryVal: (categoryVal !== undefined && categoryVal !== '') ? categoryVal : (prevDb.categoryVal || ''),
+      amzJoinKey: (amzJoinKey !== undefined && amzJoinKey !== '') ? amzJoinKey : (prevDb.amzJoinKey || ''),
+      prodJoinKey: (prodJoinKey !== undefined && prodJoinKey !== '') ? prodJoinKey : (prevDb.prodJoinKey || '')
+    };
+    localStorage.setItem(STORAGE_KEYS.DB, JSON.stringify(dbData));
+  } catch (err) {
+    console.warn('Failed saving credentials to storage:', err);
+  }
+}
+
+function restoreCredentialsFromStorage() {
+  try {
+    const spapiStr = localStorage.getItem(STORAGE_KEYS.SPAPI);
+    if (spapiStr) {
+      const sp = JSON.parse(spapiStr);
+      if (sp.clientId && document.getElementById('cfgClientId')) document.getElementById('cfgClientId').value = sp.clientId;
+      if (sp.clientSecret && document.getElementById('cfgClientSecret')) document.getElementById('cfgClientSecret').value = sp.clientSecret;
+      if (sp.refreshToken && document.getElementById('cfgRefreshToken')) document.getElementById('cfgRefreshToken').value = sp.refreshToken;
+      if (sp.sellerId && document.getElementById('cfgSellerId')) document.getElementById('cfgSellerId').value = sp.sellerId;
+      if (sp.awsRegion && document.getElementById('cfgAwsRegion')) document.getElementById('cfgAwsRegion').value = sp.awsRegion;
+      if (sp.marketplaceId && document.getElementById('cfgMarketplace')) document.getElementById('cfgMarketplace').value = sp.marketplaceId;
+      if (sp.assetsDir && document.getElementById('cfgAssetsDir')) document.getElementById('cfgAssetsDir').value = sp.assetsDir;
+      if (sp.isSandbox !== undefined && document.getElementById('cfgSandboxMode')) {
+        document.getElementById('cfgSandboxMode').checked = sp.isSandbox;
+        const badge = document.getElementById('sandboxBadge');
+        if (badge) {
+          badge.textContent = sp.isSandbox ? '🛡️ Sandbox Simulation' : '🟢 Live SP-API';
+          badge.className = sp.isSandbox ? 'pill-badge pill-sandbox' : 'pill-badge pill-approved';
+        }
+      }
+    }
+
+    const dbStr = localStorage.getItem(STORAGE_KEYS.DB);
+    if (dbStr) {
+      const db = JSON.parse(dbStr);
+      if (db.host && document.getElementById('cfgDbHost')) document.getElementById('cfgDbHost').value = db.host;
+      if (db.port && document.getElementById('cfgDbPort')) document.getElementById('cfgDbPort').value = db.port;
+      if (db.user && document.getElementById('cfgDbUser')) document.getElementById('cfgDbUser').value = db.user;
+      if (db.password && document.getElementById('cfgDbPassword')) document.getElementById('cfgDbPassword').value = db.password;
+      if (db.database && document.getElementById('cfgDbName')) document.getElementById('cfgDbName').value = db.database;
+      if (db.amazonTable && document.getElementById('cfgDbAmazonTable')) document.getElementById('cfgDbAmazonTable').value = db.amazonTable;
+      if (db.productsTable && document.getElementById('cfgDbProductsTable')) document.getElementById('cfgDbProductsTable').value = db.productsTable;
+      if (db.marketplaceCol && document.getElementById('cfgDbMarketplaceCol')) document.getElementById('cfgDbMarketplaceCol').value = db.marketplaceCol;
+      if (db.marketplaceVal && document.getElementById('cfgDbMarketplaceVal')) document.getElementById('cfgDbMarketplaceVal').value = db.marketplaceVal;
+      if (db.categoryCol && document.getElementById('cfgDbCategoryCol')) document.getElementById('cfgDbCategoryCol').value = db.categoryCol;
+      if (db.categoryVal && document.getElementById('cfgDbCategoryVal')) document.getElementById('cfgDbCategoryVal').value = db.categoryVal;
+      if (db.amzJoinKey && document.getElementById('cfgDbAmzJoinKey')) document.getElementById('cfgDbAmzJoinKey').value = db.amzJoinKey;
+      if (db.prodJoinKey && document.getElementById('cfgDbProdJoinKey')) document.getElementById('cfgDbProdJoinKey').value = db.prodJoinKey;
+    }
+  } catch (err) {
+    console.warn('Failed restoring credentials from storage:', err);
+  }
+}
+
+function getActiveSpapiCredentials() {
+  const stored = JSON.parse(localStorage.getItem(STORAGE_KEYS.SPAPI) || '{}');
+  const clientId = document.getElementById('cfgClientId')?.value?.trim() || stored.clientId || '';
+  const clientSecret = document.getElementById('cfgClientSecret')?.value?.trim() || stored.clientSecret || '';
+  const refreshToken = document.getElementById('cfgRefreshToken')?.value?.trim() || stored.refreshToken || '';
+  const sellerId = document.getElementById('cfgSellerId')?.value?.trim() || stored.sellerId || '';
+  const awsRegion = document.getElementById('cfgAwsRegion')?.value?.trim() || stored.awsRegion || 'eu-west-1';
+  const marketplaceId = document.getElementById('cfgMarketplace')?.value?.trim() || stored.marketplaceId || 'A21TJRUUN4KGV';
+  const isSandbox = document.getElementById('cfgSandboxMode') ? document.getElementById('cfgSandboxMode').checked : (stored.isSandbox !== undefined ? stored.isSandbox : false);
+  const assetsDir = document.getElementById('cfgAssetsDir')?.value?.trim() || stored.assetsDir || '';
+
+  return {
+    clientId,
+    clientSecret: (!clientSecret.startsWith('•')) ? clientSecret : (stored.clientSecret || ''),
+    refreshToken: (!refreshToken.startsWith('•')) ? refreshToken : (stored.refreshToken || ''),
+    sellerId,
+    awsRegion,
+    marketplaceId,
+    isSandbox,
+    assetsDir
+  };
+}
 
 // DOM Ready initialization
 document.addEventListener('DOMContentLoaded', () => {
+  // Restore cached credentials from localStorage immediately (prevents empty inputs on refresh)
+  restoreCredentialsFromStorage();
+
   // Restore cached listings from localStorage immediately (prevents empty table during initial load/navigation)
   try {
     const cached = localStorage.getItem('aplus_cached_listings');
@@ -560,8 +698,33 @@ function initSlideManager() {
     });
   }
 
+  const localFolderInput = document.getElementById('localFolderInput');
+  if (localFolderInput) {
+    localFolderInput.addEventListener('change', (e) => {
+      const files = Array.from(e.target.files || []);
+      if (files.length === 0) return;
+
+      let loadedCount = 0;
+      for (let i = 1; i <= 7; i++) {
+        const regex = new RegExp(`^A\\+?\\s*${i}\\.(jpe?g|png)$|^Slide[-_ ]?${i}\\.(jpe?g|png)$|^0?${i}\\.(jpe?g|png)$`, 'i');
+        const file = files.find(f => regex.test(f.name));
+        if (file) {
+          handleFileSelect(i, file);
+          loadedCount++;
+        }
+      }
+      const statusSpan = document.getElementById('loadLocalSlidesStatus');
+      if (statusSpan) {
+        statusSpan.textContent = `✓ Loaded ${loadedCount} slides from folder!`;
+        statusSpan.style.color = '#10b981';
+      }
+    });
+  }
+
   document.getElementById('applyToAsinBtn').addEventListener('click', () => {
-    const asin = prompt('Enter target ASIN for this 7-Slide A+ stack (e.g. B0...):');
+    const asinInput = document.getElementById('slideManagerAsinInput');
+    const defaultAsin = asinInput ? asinInput.value.trim().toUpperCase() : 'B09LYW9P2F';
+    const asin = prompt('Enter target ASIN for this 7-Slide A+ stack (e.g. B0...):', defaultAsin);
     if (asin && asin.trim()) {
       const cleanAsin = asin.trim().toUpperCase();
       const item = (state.allListings || state.loadedItems || []).find(i => i.asin === cleanAsin);
@@ -571,14 +734,23 @@ function initSlideManager() {
 }
 
 function handleFileSelect(slideNum, file) {
+  if (!state.uploadedSlides) state.uploadedSlides = {};
   const preview = document.getElementById(`preview${slideNum}`);
   const reader = new FileReader();
   reader.onload = (e) => {
-    preview.innerHTML = `
-      <img src="${e.target.result}" style="max-height:80px; max-width:100%; border-radius:4px; margin-bottom:4px;" alt="Slide ${slideNum}">
-      <p style="font-size:11px; color:#10b981; font-weight:600;">✓ ${file.name}</p>
-      <small style="color:#94a3b8;">${(file.size / 1024).toFixed(1)} KB</small>
-    `;
+    state.uploadedSlides[slideNum] = {
+      slideIndex: parseInt(slideNum, 10),
+      name: file.name,
+      size: file.size,
+      dataBase64: e.target.result
+    };
+    if (preview) {
+      preview.innerHTML = `
+        <img src="${e.target.result}" style="max-height:80px; max-width:100%; border-radius:4px; margin-bottom:4px;" alt="Slide ${slideNum}">
+        <p style="font-size:11px; color:#10b981; font-weight:600;">✓ ${file.name}</p>
+        <small style="color:#94a3b8;">${(file.size / 1024).toFixed(1)} KB</small>
+      `;
+    }
   };
   reader.readAsDataURL(file);
 }
@@ -614,13 +786,22 @@ async function startBatch(asins = null, customItems = null) {
     itemsToSend = catalog;
   }
 
+  // Check if client-uploaded slides exist (from 7-Slide Manager)
+  const clientSlides = (state.uploadedSlides && Object.keys(state.uploadedSlides).length > 0)
+    ? Object.values(state.uploadedSlides)
+    : undefined;
+
+  const activeCreds = getActiveSpapiCredentials();
+
   try {
     const res = await fetch('/api/start-bulk-batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
         asins, 
-        items: (itemsToSend && itemsToSend.length > 0) ? itemsToSend : undefined 
+        items: (itemsToSend && itemsToSend.length > 0) ? itemsToSend : undefined,
+        credentials: (activeCreds && activeCreds.clientId) ? activeCreds : undefined,
+        clientSlides
       })
     });
     const data = await res.json();
@@ -805,18 +986,17 @@ async function fetchConfig() {
   try {
     const res = await fetch('/api/config');
     const data = await res.json();
-    document.getElementById('cfgSandboxMode').checked = data.isSandbox;
-    if (data.marketplaceId) {
-      document.getElementById('cfgMarketplace').value = data.marketplaceId;
+    const hasStoredSpapi = Boolean(localStorage.getItem(STORAGE_KEYS.SPAPI));
+
+    if (!hasStoredSpapi) {
+      document.getElementById('cfgSandboxMode').checked = data.isSandbox;
+      if (data.marketplaceId) document.getElementById('cfgMarketplace').value = data.marketplaceId;
+      if (data.awsRegion && document.getElementById('cfgAwsRegion')) document.getElementById('cfgAwsRegion').value = data.awsRegion;
+      if (data.assetsDir && document.getElementById('cfgAssetsDir')) document.getElementById('cfgAssetsDir').value = data.assetsDir;
     }
-    if (data.awsRegion && document.getElementById('cfgAwsRegion')) {
-      document.getElementById('cfgAwsRegion').value = data.awsRegion;
-    }
+
     if (data.endpoint && document.getElementById('cfgEndpoint')) {
       document.getElementById('cfgEndpoint').value = data.endpoint;
-    }
-    if (data.assetsDir && document.getElementById('cfgAssetsDir')) {
-      document.getElementById('cfgAssetsDir').value = data.assetsDir;
     }
     if (data.clientIdMasked && data.clientIdMasked !== 'Not Set') {
       document.getElementById('cfgClientId').placeholder = `Configured: ${data.clientIdMasked}`;
@@ -824,11 +1004,19 @@ async function fetchConfig() {
     if (data.sellerIdMasked && data.sellerIdMasked !== 'Not Set' && document.getElementById('cfgSellerId')) {
       document.getElementById('cfgSellerId').placeholder = `Configured: ${data.sellerIdMasked}`;
     }
-    if (data.configured) {
-      document.getElementById('sandboxBadge').textContent = data.isSandbox ? '🛡️ Sandbox Simulation' : '🟢 Live SP-API';
-      document.getElementById('sandboxBadge').className = data.isSandbox ? 'pill-badge pill-sandbox' : 'pill-badge pill-approved';
-      document.getElementById('cfgClientSecret').placeholder = '•••••••••••••••• (Configured & Stored in .env)';
-      document.getElementById('cfgRefreshToken').placeholder = '•••••••••••••••• (Refresh Token Configured & Stored in .env)';
+
+    const isSandboxActive = document.getElementById('cfgSandboxMode') ? document.getElementById('cfgSandboxMode').checked : data.isSandbox;
+    const isConfigured = data.configured || (hasStoredSpapi && Boolean(getActiveSpapiCredentials().clientId));
+
+    if (isConfigured) {
+      document.getElementById('sandboxBadge').textContent = isSandboxActive ? '🛡️ Sandbox Simulation' : '🟢 Live SP-API';
+      document.getElementById('sandboxBadge').className = isSandboxActive ? 'pill-badge pill-sandbox' : 'pill-badge pill-approved';
+      if (!document.getElementById('cfgClientSecret').value) {
+        document.getElementById('cfgClientSecret').placeholder = '•••••••••••••••• (Configured & Stored)';
+      }
+      if (!document.getElementById('cfgRefreshToken').value) {
+        document.getElementById('cfgRefreshToken').placeholder = '•••••••••••••••• (Refresh Token Configured)';
+      }
     }
   } catch (err) {
     console.error('Failed to load config:', err);
@@ -839,29 +1027,30 @@ async function fetchDbConfig() {
   try {
     const res = await fetch('/api/db-config');
     const data = await res.json();
-    if (data.host) document.getElementById('cfgDbHost').value = data.host;
-    if (data.port) document.getElementById('cfgDbPort').value = data.port;
-    if (data.user) document.getElementById('cfgDbUser').value = data.user;
-    if (data.database) document.getElementById('cfgDbName').value = data.database;
+    const hasStoredDb = Boolean(localStorage.getItem(STORAGE_KEYS.DB));
 
-    // Load customizable table & query settings
-    if (data.amazonTable) {
-      document.getElementById('cfgDbAmazonTable').value = data.amazonTable;
-      ensureOption('selDbAmazonTable', data.amazonTable);
+    if (!hasStoredDb) {
+      if (data.host) document.getElementById('cfgDbHost').value = data.host;
+      if (data.port) document.getElementById('cfgDbPort').value = data.port;
+      if (data.user) document.getElementById('cfgDbUser').value = data.user;
+      if (data.database) document.getElementById('cfgDbName').value = data.database;
+      if (data.amazonTable) document.getElementById('cfgDbAmazonTable').value = data.amazonTable;
+      if (data.productsTable) document.getElementById('cfgDbProductsTable').value = data.productsTable;
+      if (data.marketplaceCol) document.getElementById('cfgDbMarketplaceCol').value = data.marketplaceCol;
+      if (data.marketplaceVal) document.getElementById('cfgDbMarketplaceVal').value = data.marketplaceVal;
+      if (data.categoryCol) document.getElementById('cfgDbCategoryCol').value = data.categoryCol;
+      if (data.categoryVal) document.getElementById('cfgDbCategoryVal').value = data.categoryVal;
+      if (data.amzJoinKey) document.getElementById('cfgDbAmzJoinKey').value = data.amzJoinKey;
+      if (data.prodJoinKey) document.getElementById('cfgDbProdJoinKey').value = data.prodJoinKey;
     }
-    if (data.productsTable) {
-      document.getElementById('cfgDbProductsTable').value = data.productsTable;
-      ensureOption('selDbProductsTable', data.productsTable);
-    }
-    if (data.marketplaceCol) document.getElementById('cfgDbMarketplaceCol').value = data.marketplaceCol;
-    if (data.marketplaceVal) document.getElementById('cfgDbMarketplaceVal').value = data.marketplaceVal;
-    if (data.categoryCol) document.getElementById('cfgDbCategoryCol').value = data.categoryCol;
-    if (data.categoryVal) document.getElementById('cfgDbCategoryVal').value = data.categoryVal;
-    if (data.amzJoinKey) document.getElementById('cfgDbAmzJoinKey').value = data.amzJoinKey;
-    if (data.prodJoinKey) document.getElementById('cfgDbProdJoinKey').value = data.prodJoinKey;
+
+    const curAmz = document.getElementById('cfgDbAmazonTable').value || data.amazonTable;
+    const curProd = document.getElementById('cfgDbProductsTable').value || data.productsTable;
+    if (curAmz) ensureOption('selDbAmazonTable', curAmz);
+    if (curProd) ensureOption('selDbProductsTable', curProd);
 
     const badge = document.getElementById('dbStatusBadge');
-    if (data.isConfigured) {
+    if (data.isConfigured || (hasStoredDb && Boolean(document.getElementById('cfgDbHost').value))) {
       badge.textContent = 'Configured';
       badge.className = 'pill-badge pill-sandbox';
     } else {
@@ -1117,26 +1306,30 @@ function initSettings() {
     }
   });
 
+  // Auto-save credentials as user types to prevent any data loss on refresh
+  ['cfgClientId', 'cfgClientSecret', 'cfgRefreshToken', 'cfgSellerId', 'cfgAwsRegion', 'cfgMarketplace', 'cfgAssetsDir'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', saveCredentialsToStorage);
+  });
+  ['cfgDbHost', 'cfgDbPort', 'cfgDbUser', 'cfgDbPassword', 'cfgDbName', 'cfgDbAmazonTable', 'cfgDbProductsTable', 'cfgDbMarketplaceCol', 'cfgDbMarketplaceVal', 'cfgDbCategoryCol', 'cfgDbCategoryVal', 'cfgDbAmzJoinKey', 'cfgDbProdJoinKey'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', saveCredentialsToStorage);
+  });
+
   // Amazon SP-API Settings Form Submit
   document.getElementById('settingsForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const clientId = document.getElementById('cfgClientId').value.trim();
-    const clientSecret = document.getElementById('cfgClientSecret').value.trim();
-    const refreshToken = document.getElementById('cfgRefreshToken').value.trim();
-    const sellerId = document.getElementById('cfgSellerId') ? document.getElementById('cfgSellerId').value.trim() : '';
-    const awsRegion = document.getElementById('cfgAwsRegion') ? document.getElementById('cfgAwsRegion').value.trim() : 'eu-west-1';
-    const marketplaceId = document.getElementById('cfgMarketplace').value.trim();
-    const isSandbox = document.getElementById('cfgSandboxMode').checked;
-    const assetsDir = document.getElementById('cfgAssetsDir') ? document.getElementById('cfgAssetsDir').value.trim() : '';
+    saveCredentialsToStorage();
+    const payload = getActiveSpapiCredentials();
 
     try {
       const res = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId, clientSecret, refreshToken, sellerId, awsRegion, marketplaceId, isSandbox, assetsDir })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
-      showCallout('SP-API settings saved securely to local .env (protected mode 0600)!', 'success');
+      showCallout('SP-API settings saved securely to browser memory & local .env (protected mode 0600)!', 'success');
       fetchConfig();
     } catch (err) {
       showCallout('Failed to save settings: ' + err.message, 'error');
@@ -1148,6 +1341,7 @@ function initSettings() {
   if (sandboxToggle) {
     sandboxToggle.addEventListener('change', async (e) => {
       const isSandbox = e.target.checked;
+      saveCredentialsToStorage();
       const badge = document.getElementById('sandboxBadge');
       if (badge) {
         badge.textContent = isSandbox ? '🛡️ Sandbox Simulation' : '🟢 Live SP-API';
@@ -1161,7 +1355,7 @@ function initSettings() {
         });
         const data = await res.json();
         if (data.success) {
-          if (!isSandbox && !data.configured) {
+          if (!isSandbox && !data.configured && !getActiveSpapiCredentials().clientId) {
             showCallout('⚠️ Live Mode enabled, but Amazon SP-API credentials are not set. Live pushes will require valid SP-API credentials.', 'error');
           } else {
             showCallout(data.message, isSandbox ? 'info' : 'success');
@@ -1179,8 +1373,15 @@ function initSettings() {
     box.className = 'status-callout';
     box.textContent = 'Syncing live A+ content and ASINs from Amazon SP-API...';
 
+    saveCredentialsToStorage();
+    const activeCreds = getActiveSpapiCredentials();
+
     try {
-      const res = await fetch('/api/sync-live-amazon', { method: 'POST' });
+      const res = await fetch('/api/sync-live-amazon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credentials: (activeCreds && activeCreds.clientId) ? activeCreds : undefined })
+      });
       const data = await res.json();
       if (data.success) {
         showCallout(`✅ ${data.message}`, 'success');
@@ -1199,23 +1400,8 @@ function initSettings() {
     box.className = 'status-callout';
     box.textContent = 'Testing connection with Amazon LWA and SP-API EU endpoint...';
 
-    const clientIdInput = document.getElementById('cfgClientId') ? document.getElementById('cfgClientId').value.trim() : '';
-    const clientSecretInput = document.getElementById('cfgClientSecret') ? document.getElementById('cfgClientSecret').value.trim() : '';
-    const refreshTokenInput = document.getElementById('cfgRefreshToken') ? document.getElementById('cfgRefreshToken').value.trim() : '';
-    const sellerIdInput = document.getElementById('cfgSellerId') ? document.getElementById('cfgSellerId').value.trim() : '';
-    const awsRegionInput = document.getElementById('cfgAwsRegion') ? document.getElementById('cfgAwsRegion').value.trim() : 'eu-west-1';
-    const marketplaceInput = document.getElementById('cfgMarketplace') ? document.getElementById('cfgMarketplace').value.trim() : 'A21TJRUUN4KGV';
-    const isSandbox = document.getElementById('cfgSandboxMode') ? document.getElementById('cfgSandboxMode').checked : false;
-
-    const payload = {};
-    if (clientIdInput) payload.clientId = clientIdInput;
-    // Only pass secrets if user entered new values (not masked placeholder)
-    if (clientSecretInput && !clientSecretInput.startsWith('•')) payload.clientSecret = clientSecretInput;
-    if (refreshTokenInput && !refreshTokenInput.startsWith('•')) payload.refreshToken = refreshTokenInput;
-    if (sellerIdInput) payload.sellerId = sellerIdInput;
-    if (awsRegionInput) payload.awsRegion = awsRegionInput;
-    if (marketplaceInput) payload.marketplaceId = marketplaceInput;
-    payload.isSandbox = isSandbox;
+    saveCredentialsToStorage();
+    const payload = getActiveSpapiCredentials();
 
     try {
       const res = await fetch('/api/test-connection', {
@@ -1234,6 +1420,69 @@ function initSettings() {
       showCallout(`❌ Error: ${err.message}`, 'error');
     }
   });
+
+  // Diagnose SP-API Permissions Button
+  const diagBtn = document.getElementById('diagnosePermissionsBtn');
+  if (diagBtn) {
+    diagBtn.addEventListener('click', async () => {
+      const box = document.getElementById('connectionStatusBox');
+      box.style.display = 'block';
+      box.className = 'status-callout';
+      box.innerHTML = '<strong>⏳ Running SP-API Pre-flight Diagnostics...</strong><br>Testing OAuth Token, Seller Participation, Upload Destinations, and A+ Content API...';
+
+      saveCredentialsToStorage();
+      const payload = getActiveSpapiCredentials();
+
+      try {
+        const res = await fetch('/api/diagnose-permissions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        renderDiagnosticReport(data);
+      } catch (err) {
+        showCallout(`❌ Diagnostic Error: ${err.message}`, 'error');
+      }
+    });
+  }
+}
+
+function renderDiagnosticReport(data) {
+  const box = document.getElementById('connectionStatusBox');
+  box.style.display = 'block';
+  box.className = `status-callout ${data.allPassed ? 'success' : 'error'}`;
+
+  let html = `<div style="font-weight:600; font-size:14px; margin-bottom:8px;">🔍 SP-API Permission Diagnostic Results:</div>`;
+  html += `<div style="font-size:12px; margin-bottom:12px; color:#cbd5e1;">Endpoint: <code>${data.endpoint || 'N/A'}</code> | Store: <code>${data.marketplaceId || 'A21TJRUUN4KGV'}</code> | Mode: <strong>${(data.mode || 'LIVE').toUpperCase()}</strong></div>`;
+
+  html += `<div style="display:flex; flex-direction:column; gap:6px; margin-bottom:14px;">`;
+  (data.steps || []).forEach(step => {
+    const isPass = step.status === 'PASS';
+    html += `
+      <div style="background:rgba(0,0,0,0.25); border-left:3px solid ${isPass ? '#10b981' : '#ef4444'}; padding:6px 10px; border-radius:4px; font-size:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong>${step.name}</strong>
+          <span class="pill-badge ${isPass ? 'pill-approved' : 'pill-danger'}" style="font-size:10px;">${isPass ? 'PASS ✓' : 'FAIL ✗'}</span>
+        </div>
+        <div style="color:${isPass ? '#a7f3d0' : '#fca5a5'}; font-size:11.5px; margin-top:2px;">${step.message}</div>
+      </div>
+    `;
+  });
+  html += `</div>`;
+
+  if (data.recommendations && data.recommendations.length > 0) {
+    html += `
+      <div style="background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.3); border-radius:6px; padding:10px 12px; font-size:12px;">
+        <strong style="color:#fbbf24;">⚠️ Recommended Fix:</strong>
+        <ul style="margin:6px 0 0 16px; padding:0; color:#fde68a;">
+          ${data.recommendations.map(r => `<li style="margin-bottom:4px;">${r}</li>`).join('')}
+        </ul>
+      </div>
+    `;
+  }
+
+  box.innerHTML = html;
 }
 
 function showDbCallout(msg, type) {

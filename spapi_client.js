@@ -263,6 +263,151 @@ class SpApiClient {
   }
 
   /**
+   * Run thorough pre-flight diagnostic across all SP-API layers:
+   * 1. LWA OAuth Token
+   * 2. Seller Marketplace Participations
+   * 3. Upload Destinations API (aplus resource)
+   * 4. A+ Content Management API
+   */
+  async diagnosePermissions(customConfig = null) {
+    let clientToTest = this;
+    if (customConfig && typeof customConfig === 'object') {
+      const mergedConfig = {
+        clientId: cleanValue(customConfig.clientId) || this.clientId,
+        clientSecret: cleanValue(customConfig.clientSecret) || this.clientSecret,
+        refreshToken: cleanValue(customConfig.refreshToken) || this.refreshToken,
+        sellerId: cleanValue(customConfig.sellerId) || this.sellerId,
+        awsRegion: cleanValue(customConfig.awsRegion) || this.awsRegion,
+        marketplaceId: cleanValue(customConfig.marketplaceId) || this.marketplaceId,
+        isSandbox: customConfig.isSandbox !== undefined ? customConfig.isSandbox : this.isSandbox
+      };
+      clientToTest = new SpApiClient(mergedConfig);
+    }
+
+    if (clientToTest.isSandbox && !clientToTest.clientId) {
+      return {
+        mode: 'sandbox',
+        summary: 'Sandbox Simulation mode is active. Live SP-API permission checks are simulated.',
+        steps: [
+          { name: '1. LWA OAuth Authentication', status: 'PASS', message: 'Simulated LWA Token' },
+          { name: '2. Seller Marketplace Participations', status: 'PASS', message: 'Simulated participation in amazon.in' },
+          { name: '3. Upload Destinations API', status: 'PASS', message: 'Simulated image upload destination' },
+          { name: '4. A+ Content Management API', status: 'PASS', message: 'Simulated A+ Content document access' }
+        ],
+        recommendations: []
+      };
+    }
+
+    const steps = [];
+    const recommendations = [];
+
+    // Step 1: LWA Access Token
+    let token = null;
+    try {
+      token = await clientToTest.getAccessToken();
+      steps.push({
+        name: '1. LWA OAuth Authentication',
+        status: 'PASS',
+        message: 'Valid Client ID, Client Secret, and Refresh Token. Access token received.'
+      });
+    } catch (err) {
+      steps.push({
+        name: '1. LWA OAuth Authentication',
+        status: 'FAIL',
+        message: err.message
+      });
+      recommendations.push("Verify your LWA Client ID, Client Secret, and Refresh Token in Settings. Ensure there are no leading or trailing whitespace characters.");
+      return {
+        mode: 'live',
+        endpoint: clientToTest.endpoint,
+        marketplaceId: clientToTest.marketplaceId,
+        summary: 'Failed at Step 1 (OAuth Authentication)',
+        steps,
+        recommendations
+      };
+    }
+
+    // Step 2: Sellers API (marketplace participations)
+    try {
+      const partRes = await axios.get(`${clientToTest.endpoint}/sellers/v1/marketplaceParticipations`, {
+        headers: {
+          'x-amz-access-token': token,
+          'User-Agent': 'AmazonAplusManager/2.0 (Language=Node.js; Platform=Linux)',
+          'Accept': 'application/json'
+        }
+      });
+      const parts = partRes.data?.payload || [];
+      const hasTarget = parts.some(p => p.marketplace?.id === clientToTest.marketplaceId);
+      steps.push({
+        name: '2. Seller Marketplace Participations',
+        status: 'PASS',
+        message: `Connected! Seller participates in ${parts.length} marketplace(s). Target '${clientToTest.marketplaceId}' active: ${hasTarget ? 'YES ✅' : 'NOT FOUND ⚠️'}`
+      });
+    } catch (err) {
+      const code = err.response?.status;
+      const detail = err.response?.data?.errors?.[0]?.message || err.message;
+      steps.push({
+        name: '2. Seller Marketplace Participations',
+        status: 'FAIL',
+        message: `HTTP ${code}: ${detail}`
+      });
+      if (code === 403) {
+        recommendations.push("Your SP-API App or Seller account lacks base seller permissions for endpoint " + clientToTest.endpoint);
+      }
+    }
+
+    // Step 3: Upload Destinations API (aplus resource)
+    try {
+      const dest = await clientToTest.createUploadDestination(null, 'image/jpeg');
+      steps.push({
+        name: '3. Upload Destinations API',
+        status: 'PASS',
+        message: `S3 Upload Destination successfully created! (Destination ID: ${dest.uploadDestinationId})`
+      });
+    } catch (err) {
+      steps.push({
+        name: '3. Upload Destinations API',
+        status: 'FAIL',
+        message: err.message
+      });
+      if (err.message.includes('Unauthorized') || err.message.includes('403') || err.message.includes('denied')) {
+        recommendations.push("Missing 'Product Listing' role: In Amazon Seller Central, go to 'Partner Network' > 'Develop Apps'. Click 'Edit App' on your SP-API app and ensure 'Product Listing' is checked. Then click 'Authorize' next to your app to generate a fresh Refresh Token with this role.");
+      }
+    }
+
+    // Step 4: A+ Content Management API
+    try {
+      const docs = await clientToTest.searchContentDocuments();
+      const count = docs.contentDocumentMetadataRecordList ? docs.contentDocumentMetadataRecordList.length : 0;
+      steps.push({
+        name: '4. A+ Content Management API',
+        status: 'PASS',
+        message: `A+ Content API active and verified! (Found ${count} existing document(s) in seller account)`
+      });
+    } catch (err) {
+      steps.push({
+        name: '4. A+ Content Management API',
+        status: 'FAIL',
+        message: err.message
+      });
+      if (err.message.includes('403') || err.message.includes('denied') || err.message.includes('Unauthorized')) {
+        recommendations.push("Brand Registry & Listing Permission: Ensure this Seller Central account has Brand Registry approval for amazon.in, and the developer app has the 'Product Listing' role authorized.");
+      }
+    }
+
+    const allPassed = steps.every(s => s.status === 'PASS');
+    return {
+      mode: 'live',
+      endpoint: clientToTest.endpoint,
+      marketplaceId: clientToTest.marketplaceId,
+      allPassed,
+      summary: allPassed ? 'All SP-API diagnostic tests passed! Ready for live publishing.' : 'Some SP-API checks failed. Review details below.',
+      steps,
+      recommendations: Array.from(new Set(recommendations))
+    };
+  }
+
+  /**
    * Request an image upload destination
    * Follows official SP-API Uploads API (v2020-11-01) for resource 'aplus/2020-11-01/contentDocuments'
    * Calculates contentMD5, calls uploadDestinations, and uploads binary to pre-signed S3 URL
@@ -284,7 +429,6 @@ class SpApiClient {
       : createMinimalJpeg(970, 600);
     const md5 = crypto.createHash('md5').update(buf).digest('base64');
 
-    const resource = encodeURIComponent('aplus/2020-11-01/contentDocuments');
     const params = new URLSearchParams();
     params.set('marketplaceIds', this.marketplaceId);
     params.set('contentMD5', md5);
@@ -292,36 +436,67 @@ class SpApiClient {
       params.set('contentType', imageContentType);
     }
 
-    try {
-      const response = await axios.post(
-        `${this.endpoint}/uploads/2020-11-01/uploadDestinations/${resource}?${params.toString()}`,
-        null,
-        {
-          headers: {
-            'x-amz-access-token': token
+    // Try literal path first (required by AWS API Gateway route matching), fallback to URL-encoded
+    const candidateUrls = [
+      `${this.endpoint}/uploads/2020-11-01/uploadDestinations/aplus/2020-11-01/contentDocuments?${params.toString()}`,
+      `${this.endpoint}/uploads/2020-11-01/uploadDestinations/${encodeURIComponent('aplus/2020-11-01/contentDocuments')}?${params.toString()}`
+    ];
+
+    let lastError = null;
+    let payload = null;
+
+    for (const url of candidateUrls) {
+      try {
+        const response = await axios.post(
+          url,
+          null,
+          {
+            headers: {
+              'x-amz-access-token': token,
+              'User-Agent': 'AmazonAplusManager/2.0 (Language=Node.js; Platform=Linux)',
+              'Accept': 'application/json'
+            }
           }
-        }
-      );
+        );
 
-      const payload = response.data.payload || response.data;
-      if (payload.url) {
-        await this.uploadImageBinary(payload.url, buf, payload.headers || { 'Content-Type': imageContentType });
+        payload = response.data.payload || response.data;
+        if (payload && payload.uploadDestinationId) {
+          break;
+        }
+      } catch (err) {
+        lastError = err;
+        // If it's a 404 or route-not-found error, try the alternative candidate URL
+        if (err.response && (err.response.status === 404 || err.response.status === 400)) {
+          continue;
+        }
+        // If it's a 403 or other error, break to report accurate error
+        break;
       }
+    }
 
-      return payload;
-    } catch (err) {
-      let errorMsg = err.message;
-      if (err.response?.data) {
-        if (err.response.data.errors && Array.isArray(err.response.data.errors)) {
-          errorMsg = err.response.data.errors.map(e => `${e.code || ''}: ${e.message || ''} ${e.details || ''}`.trim()).join('; ');
-        } else if (err.response.data.message) {
-          errorMsg = err.response.data.message;
+    if (!payload && lastError) {
+      let errorMsg = lastError.message;
+      const status = lastError.response?.status;
+      if (lastError.response?.data) {
+        if (lastError.response.data.errors && Array.isArray(lastError.response.data.errors)) {
+          errorMsg = lastError.response.data.errors.map(e => `${e.code || ''}: ${e.message || ''} ${e.details || ''}`.trim()).join('; ');
+        } else if (lastError.response.data.message) {
+          errorMsg = lastError.response.data.message;
         } else {
-          try { errorMsg = JSON.stringify(err.response.data); } catch (_) {}
+          try { errorMsg = JSON.stringify(lastError.response.data); } catch (_) {}
         }
+      }
+      if (status === 403 || errorMsg.includes('Access to requested resource is denied') || errorMsg.includes('Unauthorized')) {
+        errorMsg += " (Unauthorized: Your Amazon Developer App in Seller Central is missing the 'Product Listing' role, or your Refresh Token needs re-authorization under Develop Apps > Authorize).";
       }
       throw new Error(`Amazon Upload Destination creation failed: ${errorMsg}`);
     }
+
+    if (payload.url) {
+      await this.uploadImageBinary(payload.url, buf, payload.headers || { 'Content-Type': imageContentType });
+    }
+
+    return payload;
   }
 
   /**
@@ -481,11 +656,26 @@ class SpApiClient {
     let url = `${this.endpoint}/aplus/2020-11-01/contentDocuments?marketplaceId=${this.marketplaceId}`;
     if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
 
-    const response = await axios.get(url, {
-      headers: { 'x-amz-access-token': token }
-    });
-
-    return response.data;
+    try {
+      const response = await axios.get(url, {
+        headers: {
+          'x-amz-access-token': token,
+          'User-Agent': 'AmazonAplusManager/2.0 (Language=Node.js; Platform=Linux)',
+          'Accept': 'application/json'
+        }
+      });
+      return response.data;
+    } catch (err) {
+      let msg = err.message;
+      const status = err.response?.status;
+      if (err.response?.data?.errors?.[0]?.message) {
+        msg = err.response.data.errors[0].message;
+      }
+      if (status === 403 || msg.includes('Access to requested resource is denied') || msg.includes('Unauthorized')) {
+        msg = "403 Forbidden: Access to requested resource is denied. (Resolution: In Amazon Seller Central > Partner Network > Develop Apps, ensure your app has the 'Product Listing' role checked, then click 'Authorize' to generate a fresh Refresh Token with this role).";
+      }
+      throw new Error(`Amazon searchContentDocuments failed: ${msg}`);
+    }
   }
 
   /**

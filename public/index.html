@@ -199,6 +199,10 @@
               <button id="loadLocalSlidesBtn" class="btn btn-secondary btn-sm" type="button">
                 <span class="icon">🔍</span> Load Slides from /Desktop
               </button>
+              <label class="btn btn-outline btn-sm" style="cursor:pointer; margin:0; display:inline-flex; align-items:center; gap:4px;">
+                <span class="icon">📂</span> Select ASIN Folder
+                <input type="file" id="localFolderInput" webkitdirectory directory multiple style="display:none;">
+              </label>
               <span id="loadLocalSlidesStatus" style="font-size:11.5px; color:#10b981; font-weight:500;"></span>
             </div>
 
@@ -765,10 +769,25 @@
           </div>
         </div>
 
-        <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 8px; padding: 10px 16px; margin-bottom: 20px; font-size: 12px; color: #60a5fa; display: flex; align-items: center; gap: 10px;">
+        <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; font-size: 12px; color: #60a5fa; display: flex; align-items: center; gap: 10px;">
           <span style="font-size: 15px;">💡</span>
           <div>
-            <strong>Server Restart Tip:</strong> If running via terminal, restart your local server (<code>Ctrl+C</code> then <code>npm start</code> or use <code>npm run dev</code> for auto-reload) so modified endpoints are reloaded into Node.js process memory.
+            <strong>Credentials Persistence:</strong> Your credentials are saved both in your browser's local storage and in <code>.env</code>. You will not lose your settings when refreshing the page.
+          </div>
+        </div>
+
+        <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; font-size: 12px; color: #fbbf24; line-height: 1.5;">
+          <div style="font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+            <span>ℹ️</span> Fixing 403 Forbidden ("Access to requested resource is denied")
+          </div>
+          <div>
+            If upload destinations or catalog sync fail with 403:
+            <ol style="margin: 6px 0 0 16px; padding: 0;">
+              <li>In Amazon Seller Central, go to <strong>Partner Network</strong> &rarr; <strong>Develop Apps</strong>.</li>
+              <li>Click <strong>Edit App</strong> on your registered app, and verify that the <strong>Product Listing</strong> role is checked.</li>
+              <li><strong>Critical Step:</strong> After adding the role, click <strong>Authorize</strong> next to your app in Develop Apps to generate an updated <strong>Refresh Token</strong> (refresh tokens only carry roles granted at authorization time).</li>
+              <li>Paste the new Refresh Token below, click <strong>Save Settings</strong>, then run <strong>Diagnose Permissions</strong> to verify!</li>
+            </ol>
           </div>
         </div>
 
@@ -835,6 +854,9 @@
             </button>
             <button type="button" id="testConnectionBtn" class="btn btn-secondary">
               <span class="icon">🔌</span> Test Connection
+            </button>
+            <button type="button" id="diagnosePermissionsBtn" class="btn btn-secondary" style="border-color: #f59e0b; color: #fbbf24;">
+              <span class="icon">🔍</span> Diagnose Permissions
             </button>
             <button type="submit" class="btn btn-primary">
               <span class="icon">💾</span> Save Settings

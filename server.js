@@ -312,9 +312,22 @@ app.post('/api/test-connection', async (req, res) => {
   }
 });
 
+app.post('/api/diagnose-permissions', async (req, res) => {
+  try {
+    const customConfig = (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) ? req.body : null;
+    const result = await spapi.diagnosePermissions(customConfig);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // Live Amazon Catalog Sync (Pull real A+ documents & ASINs directly from Amazon SP-API)
 app.post('/api/sync-live-amazon', async (req, res) => {
   try {
+    if (req.body && req.body.credentials) {
+      spapi.updateConfig(req.body.credentials);
+    }
     const docResults = await spapi.searchContentDocuments();
     const docList = docResults.contentDocumentMetadataRecordList || [];
 
@@ -788,7 +801,11 @@ app.get('/api/asin-slide-image/:asin/:slideNum', (req, res) => {
 
 // 6. Start Bulk Update Processing Job
 app.post('/api/start-bulk-batch', async (req, res) => {
-  const { asins, items: clientItems, templateType = '7_SLIDE_STACK', options = {} } = req.body;
+  const { asins, items: clientItems, templateType = '7_SLIDE_STACK', options = {}, credentials, clientSlides } = req.body;
+  if (credentials && typeof credentials === 'object') {
+    spapi.updateConfig(credentials);
+  }
+
   const serverListings = getListings();
 
   // Combine client items with server listings into candidate pool
@@ -874,8 +891,8 @@ app.post('/api/start-bulk-batch', async (req, res) => {
       if (!spapi.isSandbox && (!spapi.clientId || !spapi.clientSecret || !spapi.refreshToken)) {
         currentBatchJob.failed++;
         item.status = 'REJECTED';
-        item.moderationErrors = ['Amazon SP-API credentials are missing in .env. Live mode requires Client ID, Client Secret, and Refresh Token.'];
-        currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ❌ ${item.asin} - Error: SP-API credentials missing in .env! Please enter them in Settings or enable Sandbox Simulation Mode.`);
+        item.moderationErrors = ['Amazon SP-API credentials are missing in Settings. Live mode requires Client ID, Client Secret, and Refresh Token.'];
+        currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ❌ ${item.asin} - Error: SP-API credentials missing in Settings! Please enter them in Settings or enable Sandbox Simulation Mode.`);
         currentBatchJob.processed++;
         continue;
       }
@@ -883,10 +900,13 @@ app.post('/api/start-bulk-batch', async (req, res) => {
       try {
         // Step A: Discover real local A+ banner graphics (A+1.jpg to A+7.jpg) in /home/dave/Desktop/{ASIN}
         const localSlides = getAplusSlideFilesForAsin(item.asin);
+        const hasClientSlides = clientSlides && Array.isArray(clientSlides) && clientSlides.length > 0;
         if (localSlides.length > 0) {
           currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] 📁 Found ${localSlides.length} local A+ banners in ${localSlides[0].dir} (${localSlides.map(s => s.fileName).join(', ')})`);
+        } else if (hasClientSlides) {
+          currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] 🌐 Using ${clientSlides.length} user-uploaded slide graphics for ${item.asin}`);
         } else {
-          currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ℹ️ No local A+ folder in /home/dave/Desktop/${item.asin}/. Generating standardized layout.`);
+          currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ℹ️ No local A+ folder on server for ${item.asin}. Generating standardized layout.`);
         }
 
         const slides = [];
@@ -894,10 +914,13 @@ app.post('/api/start-bulk-batch', async (req, res) => {
         for (let sIdx = 0; sIdx < 7; sIdx++) {
           const slideNum = sIdx + 1;
           const matchingLocalSlide = localSlides.find(s => s.slideIndex === slideNum);
+          const matchingClientSlide = hasClientSlides ? clientSlides.find(s => s.slideIndex === slideNum) : null;
           let imgBuf = null;
 
           if (matchingLocalSlide && fs.existsSync(matchingLocalSlide.fullPath)) {
             imgBuf = fs.readFileSync(matchingLocalSlide.fullPath);
+          } else if (matchingClientSlide && matchingClientSlide.dataBase64) {
+            imgBuf = Buffer.from(matchingClientSlide.dataBase64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
           }
 
           // Request Amazon SP-API upload destination and upload the real A+ image to S3
@@ -911,6 +934,8 @@ app.post('/api/start-bulk-batch', async (req, res) => {
 
           if (matchingLocalSlide && imgBuf) {
             currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ⬆️ Module ${slideNum}: Uploaded ${matchingLocalSlide.fileName} (${(imgBuf.length / 1024).toFixed(0)} KB) to Amazon S3`);
+          } else if (matchingClientSlide && imgBuf) {
+            currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ⬆️ Module ${slideNum}: Uploaded ${matchingClientSlide.name || 'Slide ' + slideNum} (${(imgBuf.length / 1024).toFixed(0)} KB) to Amazon S3`);
           }
         }
 
