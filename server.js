@@ -653,25 +653,30 @@ function getAplusSlideFilesForAsin(asin, customBaseDir = null) {
   const baseDir = path.resolve(String(rawBase).trim());
   const homeDesktop = path.resolve(process.env.HOME || '/home/dave', 'Desktop');
 
-  const candidateDirs = [
-    // 1. Direct match if baseDir is already the ASIN folder (e.g. /home/dave/Desktop/B09LYW9P2F)
-    baseDir,
-    // 2. Subfolder in configured baseDir
+  // Candidate directories MUST specifically point to THIS ASIN's subfolder
+  const asinCandidateDirs = [
+    // 1. Specific ASIN subfolder inside baseDir
     path.join(baseDir, cleanAsin),
     path.join(baseDir, cleanAsin.toUpperCase()),
     path.join(baseDir, cleanAsin.toLowerCase()),
-    // 3. Subfolder on default Desktop
+    // 2. Specific ASIN subfolder on default Desktop
     path.join('/home/dave/Desktop', cleanAsin),
     path.join('/home/dave/Desktop', cleanAsin.toUpperCase()),
     path.join('/home/dave/Desktop', cleanAsin.toLowerCase()),
     path.join(homeDesktop, cleanAsin),
     path.join(homeDesktop, cleanAsin.toUpperCase()),
-    // 4. Default Desktop itself if user placed A+1.jpg directly on Desktop
-    '/home/dave/Desktop',
-    homeDesktop,
-    // 5. Uploads fallback
+    path.join(homeDesktop, cleanAsin.toLowerCase()),
+    // 3. Specific ASIN folder in uploads
     path.join(UPLOADS_DIR, cleanAsin)
-  ].filter(Boolean);
+  ];
+
+  // If baseDir was explicitly configured directly as the ASIN folder itself (e.g. /home/dave/Desktop/B09LYW9P2F)
+  if (path.basename(baseDir).toUpperCase() === cleanAsin.toUpperCase()) {
+    asinCandidateDirs.unshift(baseDir);
+  }
+
+  // Deduplicate and filter
+  const candidateDirs = Array.from(new Set(asinCandidateDirs.filter(Boolean)));
 
   let targetDir = null;
   let targetFiles = [];
@@ -682,8 +687,8 @@ function getAplusSlideFilesForAsin(asin, customBaseDir = null) {
         const stats = fs.statSync(d);
         if (stats.isDirectory()) {
           const files = fs.readdirSync(d);
-          // Check if this directory contains at least one A+ banner image
-          const hasSlide = files.some(f => /^A\+?\s*[1-7]\.(jpe?g|png)$/i.test(f) || /^Slide[-_ ]?[1-7]\.(jpe?g|png)$/i.test(f) || /^[0-9]\.(jpe?g|png)$/i.test(f));
+          // Check if this directory contains A+ slide files
+          const hasSlide = files.some(f => /^A\+?\s*[1-7]\.(jpe?g|png)$/i.test(f) || /^Slide[-_ ]?[1-7]\.(jpe?g|png)$/i.test(f));
           if (hasSlide) {
             targetDir = d;
             targetFiles = files;
@@ -694,7 +699,7 @@ function getAplusSlideFilesForAsin(asin, customBaseDir = null) {
     }
   }
 
-  // Fallback to first existing candidate directory if no banner images detected yet
+  // If still not matched, check if any candidate exists as directory
   if (!targetDir) {
     for (const d of candidateDirs) {
       if (fs.existsSync(d)) {
@@ -830,6 +835,7 @@ app.post('/api/start-bulk-batch', async (req, res) => {
   }
 
   const jobId = 'job_' + Date.now();
+  const isSandboxMode = Boolean(spapi.isSandbox);
   currentBatchJob = {
     jobId,
     startTime: new Date().toISOString(),
@@ -840,7 +846,10 @@ app.post('/api/start-bulk-batch', async (req, res) => {
     failed: 0,
     rateLimitPerSec: 8, // Stays well below Amazon's 10 req/s limit
     logs: [
-      `[${new Date().toLocaleTimeString()}] Batch job queued: ${targetItems.length} listing(s) ready for Amazon SP-API processing.`
+      `[${new Date().toLocaleTimeString()}] Batch job queued: ${targetItems.length} listing(s) ready for processing.`,
+      isSandboxMode 
+        ? `[${new Date().toLocaleTimeString()}] 🛡️ [MODE: SANDBOX SIMULATION] Active. (Simulated run. Reference IDs start with 'aplus_ref_' and will NOT appear in Amazon Seller Central).`
+        : `[${new Date().toLocaleTimeString()}] 🟢 [MODE: LIVE SP-API] Active. (Publishing directly to Amazon store '${spapi.marketplaceId}' on regional endpoint '${spapi.endpoint}').`
     ],
     currentItem: null
   };
@@ -861,13 +870,23 @@ app.post('/api/start-bulk-batch', async (req, res) => {
       currentBatchJob.currentItem = { asin: item.asin, sku: item.sku };
       currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] 🚀 ${item.asin} (${item.sku || 'N/A'}) - Starting Amazon A+ pipeline...`);
 
+      // Pre-flight check for Live mode credentials
+      if (!spapi.isSandbox && (!spapi.clientId || !spapi.clientSecret || !spapi.refreshToken)) {
+        currentBatchJob.failed++;
+        item.status = 'REJECTED';
+        item.moderationErrors = ['Amazon SP-API credentials are missing in .env. Live mode requires Client ID, Client Secret, and Refresh Token.'];
+        currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ❌ ${item.asin} - Error: SP-API credentials missing in .env! Please enter them in Settings or enable Sandbox Simulation Mode.`);
+        currentBatchJob.processed++;
+        continue;
+      }
+
       try {
         // Step A: Discover real local A+ banner graphics (A+1.jpg to A+7.jpg) in /home/dave/Desktop/{ASIN}
         const localSlides = getAplusSlideFilesForAsin(item.asin);
         if (localSlides.length > 0) {
           currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] 📁 Found ${localSlides.length} local A+ banners in ${localSlides[0].dir} (${localSlides.map(s => s.fileName).join(', ')})`);
         } else {
-          currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ℹ️ No local A+ banners found for ${item.asin}. Using standardized layout.`);
+          currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ℹ️ No local A+ folder in /home/dave/Desktop/${item.asin}/. Generating standardized layout.`);
         }
 
         const slides = [];
