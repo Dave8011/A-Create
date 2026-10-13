@@ -792,6 +792,8 @@ async function startBatch(asins = null, customItems = null) {
     : undefined;
 
   const activeCreds = getActiveSpapiCredentials();
+  const tier = document.getElementById('queueAplusTier')?.value || document.getElementById('aplusContentTier')?.value || 'PREMIUM';
+  const premiumType = document.getElementById('premiumModuleTypeSelect')?.value || 'PREMIUM_IMAGE_TEXT';
 
   try {
     const res = await fetch('/api/start-bulk-batch', {
@@ -801,7 +803,9 @@ async function startBatch(asins = null, customItems = null) {
         asins, 
         items: (itemsToSend && itemsToSend.length > 0) ? itemsToSend : undefined,
         credentials: (activeCreds && activeCreds.clientId) ? activeCreds : undefined,
-        clientSlides
+        clientSlides,
+        tier,
+        premiumType
       })
     });
     const data = await res.json();
@@ -988,11 +992,21 @@ async function fetchConfig() {
     const data = await res.json();
     const hasStoredSpapi = Boolean(localStorage.getItem(STORAGE_KEYS.SPAPI));
 
+    // Populate inputs from server .env if empty in DOM
+    const marketplaceEl = document.getElementById('cfgMarketplace');
+    if (marketplaceEl && (!marketplaceEl.value || marketplaceEl.value === 'A21TJRUUN4KGV') && data.marketplaceId) {
+      marketplaceEl.value = data.marketplaceId;
+    }
+    const regionEl = document.getElementById('cfgAwsRegion');
+    if (regionEl && !regionEl.value && data.awsRegion) {
+      regionEl.value = data.awsRegion;
+    }
+    const assetsEl = document.getElementById('cfgAssetsDir');
+    if (assetsEl && !assetsEl.value && data.assetsDir) {
+      assetsEl.value = data.assetsDir;
+    }
     if (!hasStoredSpapi) {
       document.getElementById('cfgSandboxMode').checked = data.isSandbox;
-      if (data.marketplaceId) document.getElementById('cfgMarketplace').value = data.marketplaceId;
-      if (data.awsRegion && document.getElementById('cfgAwsRegion')) document.getElementById('cfgAwsRegion').value = data.awsRegion;
-      if (data.assetsDir && document.getElementById('cfgAssetsDir')) document.getElementById('cfgAssetsDir').value = data.assetsDir;
     }
 
     if (data.endpoint && document.getElementById('cfgEndpoint')) {
@@ -1027,28 +1041,27 @@ async function fetchDbConfig() {
   try {
     const res = await fetch('/api/db-config');
     const data = await res.json();
-    const hasStoredDb = Boolean(localStorage.getItem(STORAGE_KEYS.DB));
 
-    if (!hasStoredDb) {
-      if (data.host) document.getElementById('cfgDbHost').value = data.host;
-      if (data.port) document.getElementById('cfgDbPort').value = data.port;
-      if (data.user) document.getElementById('cfgDbUser').value = data.user;
-      if (data.database) document.getElementById('cfgDbName').value = data.database;
-      if (data.amazonTable) document.getElementById('cfgDbAmazonTable').value = data.amazonTable;
-      if (data.productsTable) document.getElementById('cfgDbProductsTable').value = data.productsTable;
-      if (data.marketplaceCol) document.getElementById('cfgDbMarketplaceCol').value = data.marketplaceCol;
-      if (data.marketplaceVal) document.getElementById('cfgDbMarketplaceVal').value = data.marketplaceVal;
-      if (data.categoryCol) document.getElementById('cfgDbCategoryCol').value = data.categoryCol;
-      if (data.categoryVal) document.getElementById('cfgDbCategoryVal').value = data.categoryVal;
-      if (data.amzJoinKey) document.getElementById('cfgDbAmzJoinKey').value = data.amzJoinKey;
-      if (data.prodJoinKey) document.getElementById('cfgDbProdJoinKey').value = data.prodJoinKey;
-    }
+    // Auto-populate inputs from server .env config whenever the input is currently empty
+    if (!document.getElementById('cfgDbHost').value && data.host) document.getElementById('cfgDbHost').value = data.host;
+    if (!document.getElementById('cfgDbPort').value && data.port) document.getElementById('cfgDbPort').value = data.port;
+    if (!document.getElementById('cfgDbUser').value && data.user) document.getElementById('cfgDbUser').value = data.user;
+    if (!document.getElementById('cfgDbName').value && data.database) document.getElementById('cfgDbName').value = data.database;
+    if (!document.getElementById('cfgDbAmazonTable').value && data.amazonTable) document.getElementById('cfgDbAmazonTable').value = data.amazonTable;
+    if (!document.getElementById('cfgDbProductsTable').value && data.productsTable) document.getElementById('cfgDbProductsTable').value = data.productsTable;
+    if (!document.getElementById('cfgDbMarketplaceCol').value && data.marketplaceCol) document.getElementById('cfgDbMarketplaceCol').value = data.marketplaceCol;
+    if (!document.getElementById('cfgDbMarketplaceVal').value && data.marketplaceVal) document.getElementById('cfgDbMarketplaceVal').value = data.marketplaceVal;
+    if (!document.getElementById('cfgDbCategoryCol').value && data.categoryCol) document.getElementById('cfgDbCategoryCol').value = data.categoryCol;
+    if (!document.getElementById('cfgDbCategoryVal').value && data.categoryVal) document.getElementById('cfgDbCategoryVal').value = data.categoryVal;
+    if (!document.getElementById('cfgDbAmzJoinKey').value && (data.amzJoinKey || data.joinKey)) document.getElementById('cfgDbAmzJoinKey').value = data.amzJoinKey || data.joinKey;
+    if (!document.getElementById('cfgDbProdJoinKey').value && data.prodJoinKey) document.getElementById('cfgDbProdJoinKey').value = data.prodJoinKey;
 
     const curAmz = document.getElementById('cfgDbAmazonTable').value || data.amazonTable;
     const curProd = document.getElementById('cfgDbProductsTable').value || data.productsTable;
     if (curAmz) ensureOption('selDbAmazonTable', curAmz);
     if (curProd) ensureOption('selDbProductsTable', curProd);
 
+    const hasStoredDb = Boolean(localStorage.getItem(STORAGE_KEYS.DB));
     const badge = document.getElementById('dbStatusBadge');
     if (data.isConfigured || (hasStoredDb && Boolean(document.getElementById('cfgDbHost').value))) {
       badge.textContent = 'Configured';

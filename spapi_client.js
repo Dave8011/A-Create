@@ -436,7 +436,7 @@ class SpApiClient {
       params.set('contentType', imageContentType);
     }
 
-    // Try literal path first (required by AWS API Gateway route matching), fallback to URL-encoded
+    // Try standard greedy path parameter first (/aplus/2020-11-01/contentDocuments), then URL-encoded fallback
     const candidateUrls = [
       `${this.endpoint}/uploads/2020-11-01/uploadDestinations/aplus/2020-11-01/contentDocuments?${params.toString()}`,
       `${this.endpoint}/uploads/2020-11-01/uploadDestinations/${encodeURIComponent('aplus/2020-11-01/contentDocuments')}?${params.toString()}`
@@ -447,30 +447,27 @@ class SpApiClient {
 
     for (const url of candidateUrls) {
       try {
-        const response = await axios.post(
+        const response = await axios({
+          method: 'post',
           url,
-          null,
-          {
-            headers: {
-              'x-amz-access-token': token,
-              'User-Agent': 'AmazonAplusManager/2.0 (Language=Node.js; Platform=Linux)',
-              'Accept': 'application/json'
-            }
-          }
-        );
+          data: {},
+          headers: {
+            'x-amz-access-token': token,
+            'User-Agent': 'AmazonAplusManager/2.0 (Language=Node.js; Platform=Linux)',
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          timeout: 15000
+        });
 
-        payload = response.data.payload || response.data;
+        payload = response.data?.payload || response.data;
         if (payload && payload.uploadDestinationId) {
           break;
         }
       } catch (err) {
         lastError = err;
-        // If it's a 404 or route-not-found error, try the alternative candidate URL
-        if (err.response && (err.response.status === 404 || err.response.status === 400)) {
-          continue;
-        }
-        // If it's a 403 or other error, break to report accurate error
-        break;
+        // Do NOT break on 403 or 400! Try all candidates in candidateUrls
+        continue;
       }
     }
 
@@ -500,15 +497,53 @@ class SpApiClient {
   }
 
   /**
-   * Upload binary image to Amazon's pre-signed destination
+   * Upload binary image to Amazon's pre-signed S3 destination
+   * Supports both S3 multipart POST (Amazon Step 3c documentation) and pre-signed PUT requests
    */
   async uploadImageBinary(uploadUrl, imageBuffer, headers = {}) {
     if (this.isSandbox) {
-      // Simulate network upload latency
       await new Promise(r => setTimeout(r, 120));
       return { success: true };
     }
 
+    const FormData = require('form-data');
+    let parsedUrl = null;
+    try {
+      parsedUrl = new URL(uploadUrl);
+    } catch (_) {}
+
+    const hasFormPolicy = parsedUrl && (parsedUrl.searchParams.has('policy') || parsedUrl.searchParams.has('Policy') || parsedUrl.searchParams.has('x-amz-signature'));
+
+    // Step 3c: Try S3 multipart POST if URL includes policy / signature parameters
+    if (hasFormPolicy) {
+      try {
+        const formData = new FormData();
+        for (const [key, value] of parsedUrl.searchParams.entries()) {
+          formData.append(key, value);
+        }
+        // In Amazon S3 POST uploads, 'file' or 'File' must be the last field in multipart body
+        formData.append('file', imageBuffer, {
+          filename: 'image.jpg',
+          contentType: headers['Content-Type'] || 'image/jpeg'
+        });
+
+        const baseUrl = `${parsedUrl.origin}${parsedUrl.pathname}`;
+        await axios.post(baseUrl, formData, {
+          headers: {
+            ...formData.getHeaders()
+          },
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+          timeout: 30000
+        });
+        return { success: true };
+      } catch (postErr) {
+        // Continue to fallback PUT below
+        console.warn('S3 multipart form POST failed, attempting pre-signed PUT fallback:', postErr.message);
+      }
+    }
+
+    // Pre-signed S3 PUT upload
     let putHeaders = {};
     if (headers && typeof headers === 'object') {
       if (Array.isArray(headers)) {
@@ -528,7 +563,8 @@ class SpApiClient {
       await axios.put(uploadUrl, imageBuffer, {
         headers: putHeaders,
         maxBodyLength: Infinity,
-        maxContentLength: Infinity
+        maxContentLength: Infinity,
+        timeout: 30000
       });
       return { success: true };
     } catch (err) {
@@ -622,7 +658,7 @@ class SpApiClient {
 
     const token = await this.getAccessToken();
     const response = await axios.get(
-      `${this.endpoint}/aplus/2020-11-01/contentDocuments/${contentReferenceKey}?marketplaceId=${this.marketplaceId}&includedDataSet=METADATA&includedDataSet=CONTENTS`,
+      `${this.endpoint}/aplus/2020-11-01/contentDocuments/${contentReferenceKey}?marketplaceId=${this.marketplaceId}&includedDataSet=CONTENTS,METADATA`,
       {
         headers: { 'x-amz-access-token': token }
       }
@@ -852,58 +888,176 @@ class SpApiClient {
   }
 
   /**
-   * Build the A+ Content Document JSON for the "7-Slide Seamless Graphic Stack"
-   * Constructs 7 STANDARD_HEADER_IMAGE_TEXT modules with standard 970x600 px dimensions
+   * Build A+ Content Document JSON for both Standard and Premium A+ tiers.
+   * Complies with official SP-API A+ specs (v2020-11-01) and Premium modules documentation.
+   *
+   * @param {string} name - Document name
+   * @param {string} asin - Associated ASIN
+   * @param {Array} slides - Array of slide objects { uploadDestinationId, title, subheadline, bodyText, altText }
+   * @param {Object} options - { tier: 'PREMIUM' | 'STANDARD', premiumType: 'PREMIUM_FULL_BACKGROUND_IMAGE' | 'PREMIUM_IMAGE_TEXT' | 'PREMIUM_FULL_BACKGROUND_TEXT' }
    */
-  build7SlideContentDocument(name, asin, slides = []) {
+  build7SlideContentDocument(name, asin, slides = [], options = {}) {
     const MARKETPLACE_LOCALES = {
-      'A21TJRUUN4KGV': 'en_IN',
-      'ATVPDKIKX0DER': 'en_US',
-      'A1F83G8C2ARO7P': 'en_GB',
-      'A1PA6795UKMFR9': 'de_DE',
-      'A13V1IB3VIYZZH': 'fr_FR',
-      'APJ6JRA9NG5V4': 'it_IT',
-      'A1RKKUPIHCS9HS': 'es_ES',
-      'A1805IZSGTT6HS': 'nl_NL',
-      'A2NODRKZP88ZB9': 'sv_SE',
-      'A1C3SOZRARQ6R3': 'pl_PL',
-      'A2EUQ1WTGCTBG2': 'en_CA',
-      'A1AM78C64UM0Y8': 'es_MX',
-      'A1VC38T7YXB528': 'ja_JP',
-      'A39IBJ37TRP1C6': 'en_AU'
+      'A21TJRUUN4KGV': 'en-IN',
+      'ATVPDKIKX0DER': 'en-US',
+      'A1F83G8C2ARO7P': 'en-GB',
+      'A1PA6795UKMFR9': 'de-DE',
+      'A13V1IB3VIYZZH': 'fr-FR',
+      'APJ6JRA9NG5V4': 'it-IT',
+      'A1RKKUPIHCS9HS': 'es-ES',
+      'A1805IZSGTT6HS': 'nl-NL',
+      'A2NODRKZP88ZB9': 'sv-SE',
+      'A1C3SOZRARQ6R3': 'pl-PL',
+      'A2EUQ1WTGCTBG2': 'en-CA',
+      'A1AM78C64UM0Y8': 'es-MX',
+      'A1VC38T7YXB528': 'ja-JP',
+      'A39IBJ37TRP1C6': 'en-AU'
     };
 
-    const targetLocale = MARKETPLACE_LOCALES[this.marketplaceId] || 'en_IN';
+    const targetLocale = MARKETPLACE_LOCALES[this.marketplaceId] || 'en-IN';
+    const tier = (options.tier || 'PREMIUM').toUpperCase();
+    const premiumType = options.premiumType || 'PREMIUM_IMAGE_TEXT';
 
-    const contentModuleList = slides.map((slide, index) => {
-      return {
-        contentModuleType: 'STANDARD_HEADER_IMAGE_TEXT',
-        standardHeaderImageText: {
-          headline: {
-            value: slide.title || `Slide ${index + 1}`,
-            decoratorSet: []
-          },
-          block: {
-            image: {
-              uploadDestinationId: slide.uploadDestinationId,
-              imageCropSpecification: {
-                size: {
-                  width: { value: 970, units: 'pixels' },
-                  height: { value: 600, units: 'pixels' }
-                }
+    // Maximum 7 modules allowed per Amazon SP-API rules
+    const cappedSlides = slides.slice(0, 7);
+
+    let contentModuleList = [];
+
+    if (tier === 'PREMIUM') {
+      contentModuleList = cappedSlides.map((slide, index) => {
+        const slideNum = index + 1;
+        const headlineText = (slide.title || `Slide ${slideNum} - ${name || asin}`).trim().slice(0, 80);
+        const subheadlineText = (slide.subheadline || `Feature ${slideNum}`).trim().slice(0, 40);
+        const altText = (slide.altText || `${name || asin} slide ${slideNum}`).trim();
+
+        if (premiumType === 'PREMIUM_FULL_BACKGROUND_IMAGE') {
+          return {
+            contentModuleType: 'PREMIUM_FULL_BACKGROUND_IMAGE',
+            premiumFullBackgroundImage: {
+              desktopImage: {
+                imageCropSpecification: {
+                  size: { width: { value: 1464, units: 'pixels' }, height: { value: 600, units: 'pixels' } },
+                  offset: { x: { value: 0, units: 'pixels' }, y: { value: 0, units: 'pixels' } }
+                },
+                uploadDestinationId: slide.uploadDestinationId,
+                altText
               },
-              alternativeText: slide.altText || `${name || 'Product'} feature ${index + 1}`
+              mobileImage: {
+                imageCropSpecification: {
+                  size: { width: { value: 600, units: 'pixels' }, height: { value: 450, units: 'pixels' } },
+                  offset: { x: { value: 0, units: 'pixels' }, y: { value: 0, units: 'pixels' } }
+                },
+                uploadDestinationId: slide.uploadDestinationId,
+                altText
+              },
+              headline: {
+                decoratorSet: [],
+                value: headlineText
+              }
+            }
+          };
+        } else if (premiumType === 'PREMIUM_FULL_BACKGROUND_TEXT') {
+          return {
+            contentModuleType: 'PREMIUM_FULL_BACKGROUND_TEXT',
+            premiumFullBackgroundText: {
+              positionType: (index % 2 === 0 ? 'LEFT' : 'RIGHT'),
+              colorType: 'DARK',
+              desktopImage: {
+                imageCropSpecification: {
+                  size: { width: { value: 1464, units: 'pixels' }, height: { value: 600, units: 'pixels' } },
+                  offset: { x: { value: 0, units: 'pixels' }, y: { value: 0, units: 'pixels' } }
+                },
+                uploadDestinationId: slide.uploadDestinationId,
+                altText
+              },
+              mobileImage: {
+                imageCropSpecification: {
+                  size: { width: { value: 600, units: 'pixels' }, height: { value: 450, units: 'pixels' } },
+                  offset: { x: { value: 0, units: 'pixels' }, y: { value: 0, units: 'pixels' } }
+                },
+                uploadDestinationId: slide.uploadDestinationId,
+                altText
+              },
+              subheadline: {
+                decoratorSet: [],
+                value: subheadlineText
+              },
+              headline: {
+                decoratorSet: [],
+                value: headlineText.slice(0, 60)
+              },
+              description: {
+                textList: [{
+                  decoratorSet: [],
+                  value: (slide.bodyText || `${name || asin} premium quality guarantee`).trim().slice(0, 300)
+                }]
+              }
+            }
+          };
+        } else {
+          // Default: PREMIUM_IMAGE_TEXT (matches user requested module format)
+          const bodyVal = (slide.bodyText || `${name || asin} premium product features and quality craftsmanship.`).trim().slice(0, 500);
+          return {
+            contentModuleType: 'PREMIUM_IMAGE_TEXT',
+            premiumImageText: {
+              subheadline: {
+                decoratorSet: [],
+                value: subheadlineText
+              },
+              bodyText: {
+                textList: [{
+                  decoratorSet: [],
+                  value: bodyVal
+                }]
+              },
+              positionType: (index % 2 === 0 ? 'LEFT' : 'RIGHT'),
+              image: {
+                imageCropSpecification: {
+                  size: { width: { value: 1440, units: 'pixels' }, height: { value: 1080, units: 'pixels' } },
+                  offset: { x: { value: 0, units: 'pixels' }, y: { value: 0, units: 'pixels' } }
+                },
+                uploadDestinationId: slide.uploadDestinationId,
+                altText
+              },
+              headline: {
+                decoratorSet: [],
+                value: headlineText
+              }
+            }
+          };
+        }
+      });
+    } else {
+      // Standard A+ Content (EBC Standard 970x600 px banner stack)
+      contentModuleList = cappedSlides.map((slide, index) => {
+        const slideNum = index + 1;
+        return {
+          contentModuleType: 'STANDARD_HEADER_IMAGE_TEXT',
+          standardHeaderImageText: {
+            headline: {
+              value: (slide.title || `Slide ${slideNum}`).trim().slice(0, 80),
+              decoratorSet: []
+            },
+            block: {
+              image: {
+                uploadDestinationId: slide.uploadDestinationId,
+                imageCropSpecification: {
+                  size: { width: { value: 970, units: 'pixels' }, height: { value: 600, units: 'pixels' } },
+                  offset: { x: { value: 0, units: 'pixels' }, y: { value: 0, units: 'pixels' } }
+                },
+                altText: (slide.altText || `${name || 'Product'} feature ${slideNum}`).trim()
+              }
             }
           }
-        }
-      };
-    });
+        };
+      });
+    }
 
     return {
       contentDocument: {
-        name: `${name || asin} - A+ Enhanced Brand Content`,
+        name: `${name || asin} - A+ ${tier === 'PREMIUM' ? 'Premium' : 'Enhanced Brand'} Content`.slice(0, 100),
         contentType: 'EBC',
-        contentSubType: 'STANDARD',
+        contentSubType: (tier === 'PREMIUM' ? null : 'STANDARD'),
         locale: targetLocale,
         contentModuleList
       }

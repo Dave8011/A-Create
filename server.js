@@ -101,13 +101,15 @@ app.post('/api/db-config', (req, res) => {
   const { 
     host, port, user, password, database,
     amazonTable, productsTable, marketplaceCol, marketplaceVal,
-    categoryCol, categoryVal, joinKey
+    categoryCol, categoryVal, joinKey,
+    amzJoinKey, prodJoinKey
   } = req.body;
 
   omsDb.updateConfig({ 
     host, port, user, password, database,
     amazonTable, productsTable, marketplaceCol, marketplaceVal,
-    categoryCol, categoryVal, joinKey
+    categoryCol, categoryVal, joinKey,
+    amzJoinKey, prodJoinKey
   });
 
   // Persist to local .env file
@@ -139,7 +141,9 @@ app.post('/api/db-config', (req, res) => {
     updateEnvVar('DB_MARKETPLACE_VAL', marketplaceVal);
     updateEnvVar('DB_CATEGORY_COL', categoryCol);
     updateEnvVar('DB_CATEGORY_VAL', categoryVal);
-    updateEnvVar('DB_JOIN_KEY', joinKey);
+    updateEnvVar('DB_JOIN_KEY', joinKey || amzJoinKey);
+    updateEnvVar('DB_AMZ_JOIN_KEY', amzJoinKey || joinKey);
+    updateEnvVar('DB_PROD_JOIN_KEY', prodJoinKey);
 
     fs.writeFileSync(envPath, envContent.trim() + '\n', { mode: 0o600 });
     try {
@@ -801,7 +805,17 @@ app.get('/api/asin-slide-image/:asin/:slideNum', (req, res) => {
 
 // 6. Start Bulk Update Processing Job
 app.post('/api/start-bulk-batch', async (req, res) => {
-  const { asins, items: clientItems, templateType = '7_SLIDE_STACK', options = {}, credentials, clientSlides } = req.body;
+  const { 
+    asins, 
+    items: clientItems, 
+    templateType = '7_SLIDE_STACK', 
+    tier = 'PREMIUM', 
+    premiumType = 'PREMIUM_IMAGE_TEXT', 
+    options = {}, 
+    credentials, 
+    clientSlides 
+  } = req.body;
+
   if (credentials && typeof credentials === 'object') {
     spapi.updateConfig(credentials);
   }
@@ -853,6 +867,8 @@ app.post('/api/start-bulk-batch', async (req, res) => {
 
   const jobId = 'job_' + Date.now();
   const isSandboxMode = Boolean(spapi.isSandbox);
+  const activeTier = (tier || 'PREMIUM').toUpperCase();
+
   currentBatchJob = {
     jobId,
     startTime: new Date().toISOString(),
@@ -866,7 +882,7 @@ app.post('/api/start-bulk-batch', async (req, res) => {
       `[${new Date().toLocaleTimeString()}] Batch job queued: ${targetItems.length} listing(s) ready for processing.`,
       isSandboxMode 
         ? `[${new Date().toLocaleTimeString()}] 🛡️ [MODE: SANDBOX SIMULATION] Active. (Simulated run. Reference IDs start with 'aplus_ref_' and will NOT appear in Amazon Seller Central).`
-        : `[${new Date().toLocaleTimeString()}] 🟢 [MODE: LIVE SP-API] Active. (Publishing directly to Amazon store '${spapi.marketplaceId}' on regional endpoint '${spapi.endpoint}').`
+        : `[${new Date().toLocaleTimeString()}] 🟢 [MODE: LIVE SP-API] Active. (Publishing ${activeTier === 'PREMIUM' ? '💎 Premium A+ (EBC)' : '📑 Standard A+ (EBC)'} directly to Amazon store '${spapi.marketplaceId}' on '${spapi.endpoint}').`
     ],
     currentItem: null
   };
@@ -885,7 +901,7 @@ app.post('/api/start-bulk-batch', async (req, res) => {
 
       const item = targetItems[i];
       currentBatchJob.currentItem = { asin: item.asin, sku: item.sku };
-      currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] 🚀 ${item.asin} (${item.sku || 'N/A'}) - Starting Amazon A+ pipeline...`);
+      currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] 🚀 ${item.asin} (${item.sku || 'N/A'}) - Starting ${activeTier === 'PREMIUM' ? 'Premium' : 'Standard'} A+ pipeline...`);
 
       // Pre-flight check for Live mode credentials
       if (!spapi.isSandbox && (!spapi.clientId || !spapi.clientSecret || !spapi.refreshToken)) {
@@ -928,7 +944,9 @@ app.post('/api/start-bulk-batch', async (req, res) => {
 
           slides.push({
             uploadDestinationId: dest.uploadDestinationId,
-            title: `Module ${slideNum}`,
+            title: `Module ${slideNum} - Quality Features`,
+            subheadline: `Certified Pure`,
+            bodyText: `${item.title || item.asin} features premium quality and tested authenticity.`,
             altText: `${item.title || item.asin} slide ${slideNum}`
           });
 
@@ -939,25 +957,40 @@ app.post('/api/start-bulk-batch', async (req, res) => {
           }
         }
 
-        // Step B: Build A+ Document
-        const docPayload = spapi.build7SlideContentDocument(item.title || item.asin, item.asin, slides);
+        // Step B: Build A+ Document JSON conforming to Standard or Premium schema
+        const docPayload = spapi.build7SlideContentDocument(item.title || item.asin, item.asin, slides, { 
+          tier: activeTier, 
+          premiumType: premiumType || 'PREMIUM_IMAGE_TEXT' 
+        });
+
+        // Step 3d: Pre-flight Validation
+        try {
+          const valRes = await spapi.validateContentDocumentAsinRelations([item.asin], docPayload);
+          if (valRes && valRes.errors && valRes.errors.length > 0) {
+            const warnStr = valRes.errors.map(e => e.message || e.code).join('; ');
+            currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ⚠️ Amazon Pre-flight Validation note: ${warnStr}`);
+          }
+        } catch (_) {}
+
+        // Step C: Create A+ Content Document in Amazon SP-API
         const docRes = await spapi.createContentDocument(docPayload);
 
-        // Step C: Link ASIN to A+ Document
+        // Step D: Link ASIN to A+ Document
         await spapi.postContentDocumentAsinRelations(docRes.contentReferenceKey, [item.asin]);
 
-        // Step D: Submit A+ Document for Amazon Review, Approval, & Publishing
+        // Step E: Submit A+ Document for Amazon Review, Approval, & Publishing
         await spapi.postContentDocumentApprovalSubmission(docRes.contentReferenceKey);
 
         // Update local listing state
         item.status = 'SUBMITTED';
+        item.templateType = activeTier === 'PREMIUM' ? 'PREMIUM_A_PLUS' : '7_SLIDE_STACK';
         item.liveOnAmazon = true;
         item.moderationErrors = [];
         item.lastUpdated = new Date().toISOString().split('T')[0];
         item.contentReferenceKey = docRes.contentReferenceKey;
 
         currentBatchJob.successful++;
-        currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ✅ ${item.asin} (${item.sku || 'N/A'}) - A+ Document created (${docRes.contentReferenceKey}), ASIN linked, and submitted for Amazon approval!`);
+        currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ✅ ${item.asin} (${item.sku || 'N/A'}) - ${activeTier === 'PREMIUM' ? 'Premium' : 'Standard'} A+ Document created (${docRes.contentReferenceKey}), ASIN linked, and submitted for Amazon approval!`);
       } catch (err) {
         currentBatchJob.failed++;
         item.status = 'REJECTED';

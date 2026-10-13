@@ -186,8 +186,17 @@
                 <h2 class="card-title">7-Slide Seamless Graphic Stack</h2>
                 <p class="card-desc">Designed for pre-designed 970×600 px banner stacks (like Organic Fennel Seed / Pure Tree).</p>
               </div>
-              <div class="preset-selector">
-                <span class="preset-badge">Preset: 7-Slide Standard</span>
+              <div class="preset-selector" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                <label style="font-size: 11.5px; color: var(--text-muted); margin: 0; font-weight: 500;">A+ Tier:</label>
+                <select id="aplusContentTier" class="form-input" style="font-size: 12px; padding: 4px 8px; width: auto; background: #1e293b; color: #f8fafc; border-color: #f59e0b;">
+                  <option value="PREMIUM" selected>💎 Premium A+ (EBC)</option>
+                  <option value="STANDARD">📑 Standard A+ (EBC)</option>
+                </select>
+                <select id="premiumModuleTypeSelect" class="form-input" style="font-size: 12px; padding: 4px 8px; width: auto; background: #1e293b; color: #f8fafc;">
+                  <option value="PREMIUM_IMAGE_TEXT" selected>💎 Premium Image & Text (1440×1080)</option>
+                  <option value="PREMIUM_FULL_BACKGROUND_IMAGE">🖼️ Premium Full Banner (1464×600)</option>
+                  <option value="PREMIUM_FULL_BACKGROUND_TEXT">📜 Premium Text Overlay (1464×600)</option>
+                </select>
               </div>
             </div>
 
@@ -415,7 +424,11 @@
             <h2 class="card-title">Bulk Execution Queue & Rate Limiter</h2>
             <p class="card-desc">Automated batch processor with Amazon SP-API quota management (capped at 8 req/sec).</p>
           </div>
-          <div class="queue-controls">
+          <div class="queue-controls" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <select id="queueAplusTier" class="form-input" style="font-size: 12px; padding: 6px 10px; width: auto; background: #1e293b; color: #f8fafc; border-color: #f59e0b;">
+              <option value="PREMIUM" selected>💎 Premium A+ (EBC)</option>
+              <option value="STANDARD">📑 Standard A+ (EBC)</option>
+            </select>
             <button id="startBulkAllBtn" class="btn btn-primary">
               <span class="icon">▶️</span> Start Bulk Catalog Update
             </button>
