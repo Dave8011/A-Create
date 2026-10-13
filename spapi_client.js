@@ -244,20 +244,21 @@ class SpApiClient {
       : createMinimalJpeg(970, 600);
     const md5 = crypto.createHash('md5').update(buf).digest('base64');
 
-    const params = new URLSearchParams({
-      marketplaceIds: this.marketplaceId,
-      contentMD5: md5,
-      contentType: imageContentType
-    });
+    const resource = encodeURIComponent('aplus/2020-11-01/contentDocuments');
+    const params = new URLSearchParams();
+    params.set('marketplaceIds', this.marketplaceId);
+    params.set('contentMD5', md5);
+    if (imageContentType) {
+      params.set('contentType', imageContentType);
+    }
 
     try {
       const response = await axios.post(
-        `${this.endpoint}/uploads/2020-11-01/uploadDestinations/aplus/2020-11-01/contentDocuments?${params.toString()}`,
-        {},
+        `${this.endpoint}/uploads/2020-11-01/uploadDestinations/${resource}?${params.toString()}`,
+        null,
         {
           headers: {
-            'x-amz-access-token': token,
-            'Content-Type': 'application/json'
+            'x-amz-access-token': token
           }
         }
       );
@@ -269,7 +270,16 @@ class SpApiClient {
 
       return payload;
     } catch (err) {
-      const errorMsg = err.response?.data?.errors?.[0]?.message || err.response?.data?.message || err.message;
+      let errorMsg = err.message;
+      if (err.response?.data) {
+        if (err.response.data.errors && Array.isArray(err.response.data.errors)) {
+          errorMsg = err.response.data.errors.map(e => `${e.code || ''}: ${e.message || ''} ${e.details || ''}`.trim()).join('; ');
+        } else if (err.response.data.message) {
+          errorMsg = err.response.data.message;
+        } else {
+          try { errorMsg = JSON.stringify(err.response.data); } catch (_) {}
+        }
+      }
       throw new Error(`Amazon Upload Destination creation failed: ${errorMsg}`);
     }
   }
@@ -284,19 +294,32 @@ class SpApiClient {
       return { success: true };
     }
 
-    const putHeaders = Object.assign({}, headers);
+    let putHeaders = {};
+    if (headers && typeof headers === 'object') {
+      if (Array.isArray(headers)) {
+        headers.forEach(h => {
+          if (h && h.name) putHeaders[h.name] = h.value;
+        });
+      } else {
+        Object.assign(putHeaders, headers);
+      }
+    }
     putHeaders['Content-Length'] = imageBuffer.length;
     // S3 pre-signed URLs must not carry SP-API auth tokens
     delete putHeaders['x-amz-access-token'];
     delete putHeaders['Authorization'];
 
-    await axios.put(uploadUrl, imageBuffer, {
-      headers: putHeaders,
-      maxBodyLength: Infinity,
-      maxContentLength: Infinity
-    });
-
-    return { success: true };
+    try {
+      await axios.put(uploadUrl, imageBuffer, {
+        headers: putHeaders,
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity
+      });
+      return { success: true };
+    } catch (err) {
+      const s3Msg = err.response?.data ? String(err.response.data) : err.message;
+      throw new Error(`Amazon S3 image upload failed: ${s3Msg}`);
+    }
   }
 
   /**

@@ -646,37 +646,80 @@ app.post('/api/validate-slide-layout', (req, res) => {
 
 // Helper: Discover local A+ banner files (A+1.jpg to A+7.jpg) for a given ASIN
 function getAplusSlideFilesForAsin(asin, customBaseDir = null) {
-  if (!asin) return [];
-  const baseDir = customBaseDir || process.env.APLUS_ASSETS_DIR || '/home/dave/Desktop';
+  const cleanAsin = String(asin || '').trim();
+  if (!cleanAsin) return [];
+
+  const rawBase = customBaseDir || process.env.APLUS_ASSETS_DIR || '/home/dave/Desktop';
+  const baseDir = path.resolve(String(rawBase).trim());
+  const homeDesktop = path.resolve(process.env.HOME || '/home/dave', 'Desktop');
+
   const candidateDirs = [
-    path.join(baseDir, asin),
-    path.join(baseDir, asin.toUpperCase()),
-    path.join(baseDir, asin.toLowerCase()),
-    path.join(UPLOADS_DIR, asin)
-  ];
+    // 1. Direct match if baseDir is already the ASIN folder (e.g. /home/dave/Desktop/B09LYW9P2F)
+    baseDir,
+    // 2. Subfolder in configured baseDir
+    path.join(baseDir, cleanAsin),
+    path.join(baseDir, cleanAsin.toUpperCase()),
+    path.join(baseDir, cleanAsin.toLowerCase()),
+    // 3. Subfolder on default Desktop
+    path.join('/home/dave/Desktop', cleanAsin),
+    path.join('/home/dave/Desktop', cleanAsin.toUpperCase()),
+    path.join('/home/dave/Desktop', cleanAsin.toLowerCase()),
+    path.join(homeDesktop, cleanAsin),
+    path.join(homeDesktop, cleanAsin.toUpperCase()),
+    // 4. Default Desktop itself if user placed A+1.jpg directly on Desktop
+    '/home/dave/Desktop',
+    homeDesktop,
+    // 5. Uploads fallback
+    path.join(UPLOADS_DIR, cleanAsin)
+  ].filter(Boolean);
 
   let targetDir = null;
+  let targetFiles = [];
+
   for (const d of candidateDirs) {
     if (fs.existsSync(d)) {
       try {
-        if (fs.statSync(d).isDirectory()) {
-          targetDir = d;
-          break;
+        const stats = fs.statSync(d);
+        if (stats.isDirectory()) {
+          const files = fs.readdirSync(d);
+          // Check if this directory contains at least one A+ banner image
+          const hasSlide = files.some(f => /^A\+?\s*[1-7]\.(jpe?g|png)$/i.test(f) || /^Slide[-_ ]?[1-7]\.(jpe?g|png)$/i.test(f) || /^[0-9]\.(jpe?g|png)$/i.test(f));
+          if (hasSlide) {
+            targetDir = d;
+            targetFiles = files;
+            break;
+          }
         }
       } catch (_) {}
     }
   }
 
-  if (!targetDir) return [];
+  // Fallback to first existing candidate directory if no banner images detected yet
+  if (!targetDir) {
+    for (const d of candidateDirs) {
+      if (fs.existsSync(d)) {
+        try {
+          if (fs.statSync(d).isDirectory()) {
+            targetDir = d;
+            targetFiles = fs.readdirSync(d);
+            break;
+          }
+        } catch (_) {}
+      }
+    }
+  }
+
+  if (!targetDir || targetFiles.length === 0) return [];
 
   try {
-    const filesInDir = fs.readdirSync(targetDir);
     const slides = [];
 
     for (let i = 1; i <= 7; i++) {
-      // Matches A+1.jpg, A+1.png, a+1.jpeg, Slide1.jpg, 01.jpg, 1.jpg
+      // Matches: A+1.jpg, A+ 1.jpg, A + 1.jpg, A1.jpg, Slide1.jpg, 01.jpg, 1.jpg
       const patterns = [
-        new RegExp('^A\\+' + i + '\\.(jpe?g|png)$', 'i'),
+        new RegExp('^A\\+?\\s*' + i + '\\.(jpe?g|png)$', 'i'),
+        new RegExp('^A\\s*\\+\\s*' + i + '\\.(jpe?g|png)$', 'i'),
+        new RegExp('^A[-_]?' + i + '\\.(jpe?g|png)$', 'i'),
         new RegExp('^Slide[-_ ]?' + i + '\\.(jpe?g|png)$', 'i'),
         new RegExp('^0?' + i + '[-_ ].*\\.(jpe?g|png)$', 'i'),
         new RegExp('^0?' + i + '\\.(jpe?g|png)$', 'i')
@@ -684,7 +727,7 @@ function getAplusSlideFilesForAsin(asin, customBaseDir = null) {
 
       let matchedFile = null;
       for (const pat of patterns) {
-        matchedFile = filesInDir.find(f => pat.test(f));
+        matchedFile = targetFiles.find(f => pat.test(f));
         if (matchedFile) break;
       }
 
@@ -824,7 +867,7 @@ app.post('/api/start-bulk-batch', async (req, res) => {
         if (localSlides.length > 0) {
           currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] 📁 Found ${localSlides.length} local A+ banners in ${localSlides[0].dir} (${localSlides.map(s => s.fileName).join(', ')})`);
         } else {
-          currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ℹ️ No local A+ folder in /home/dave/Desktop/${item.asin}/. Generating standardized layout.`);
+          currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ℹ️ No local A+ banners found for ${item.asin}. Using standardized layout.`);
         }
 
         const slides = [];
