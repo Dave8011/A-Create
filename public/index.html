@@ -191,6 +191,17 @@
               </div>
             </div>
 
+            <!-- Quick Local ASIN Loader Toolbar -->
+            <div style="display:flex; gap:10px; align-items:center; margin-bottom:16px; background: rgba(255,255,255,0.03); padding:10px 14px; border-radius:8px; border: 1px solid rgba(255,255,255,0.08); flex-wrap:wrap;">
+              <span style="font-size:14px;">📁</span>
+              <span style="font-size:12px; color:var(--text-muted);">Local A+ Graphics Folder:</span>
+              <input type="text" id="slideManagerAsinInput" class="form-input" style="width:160px; padding:5px 8px; font-size:12px;" placeholder="e.g. B09LYW9P2F" value="B09LYW9P2F">
+              <button id="loadLocalSlidesBtn" class="btn btn-secondary btn-sm" type="button">
+                <span class="icon">🔍</span> Load Slides from /Desktop
+              </button>
+              <span id="loadLocalSlidesStatus" style="font-size:11.5px; color:#10b981; font-weight:500;"></span>
+            </div>
+
             <!-- Slide Upload Slots -->
             <div class="slides-grid" id="slidesGrid">
               <!-- Slide 1 -->
@@ -803,6 +814,12 @@
               <label class="form-label">Regional SP-API Endpoint</label>
               <input type="text" id="cfgEndpoint" class="form-input" value="https://sellingpartnerapi-eu.amazon.com" disabled>
             </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">A+ Local Graphics Base Directory <code style="font-size: 10px; color: var(--primary);">APLUS_ASSETS_DIR</code></label>
+            <input type="text" id="cfgAssetsDir" class="form-input" value="/home/dave/Desktop" placeholder="/home/dave/Desktop">
+            <small style="color: var(--text-muted); font-size: 11px; margin-top: 4px; display: block;">Local folder containing ASIN directories with <code>A+1.jpg</code> to <code>A+7.jpg</code> (e.g. <code>/home/dave/Desktop/B09LYW9P2F/A+1.jpg</code>).</small>
           </div>
 
           <div class="form-group">

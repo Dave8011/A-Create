@@ -90,17 +90,17 @@ class SpApiClient {
   }
 
   updateConfig(config = {}) {
-    if (config.clientId !== undefined) this.clientId = cleanValue(config.clientId);
+    if (config.clientId !== undefined && config.clientId !== '') this.clientId = cleanValue(config.clientId);
     if (config.clientSecret !== undefined && config.clientSecret !== '') this.clientSecret = cleanValue(config.clientSecret);
     if (config.refreshToken !== undefined && config.refreshToken !== '') this.refreshToken = cleanValue(config.refreshToken);
-    if (config.sellerId !== undefined) this.sellerId = cleanValue(config.sellerId);
-    if (config.awsRegion !== undefined) {
+    if (config.sellerId !== undefined && config.sellerId !== '') this.sellerId = cleanValue(config.sellerId);
+    if (config.awsRegion !== undefined && config.awsRegion !== '') {
       this.awsRegion = cleanValue(config.awsRegion);
       this.endpoint = REGION_BY_AWS_REGION[this.awsRegion.toLowerCase()] || REGIONS.eu;
     }
     if (config.marketplaceId !== undefined && config.marketplaceId !== '') this.marketplaceId = cleanValue(config.marketplaceId);
-    if (config.endpoint !== undefined) this.endpoint = config.endpoint;
-    if (config.isSandbox !== undefined) this.isSandbox = config.isSandbox;
+    if (config.endpoint !== undefined && config.endpoint !== '') this.endpoint = config.endpoint;
+    if (config.isSandbox !== undefined) this.isSandbox = Boolean(config.isSandbox);
     this.cachedToken = null;
     this.tokenExpiresAt = 0;
   }

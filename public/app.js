@@ -522,6 +522,44 @@ function initSlideManager() {
     }
   });
 
+  const loadLocalBtn = document.getElementById('loadLocalSlidesBtn');
+  if (loadLocalBtn) {
+    loadLocalBtn.addEventListener('click', async () => {
+      const asinInput = document.getElementById('slideManagerAsinInput');
+      const statusSpan = document.getElementById('loadLocalSlidesStatus');
+      const asin = asinInput ? asinInput.value.trim().toUpperCase() : 'B09LYW9P2F';
+      if (!asin) return;
+
+      loadLocalBtn.textContent = 'Loading...';
+      try {
+        const res = await fetch(`/api/asin-slides/${encodeURIComponent(asin)}`);
+        const data = await res.json();
+        if (data && data.slides && data.slides.length > 0) {
+          data.slides.forEach(s => {
+            const preview = document.getElementById(`preview${s.slideIndex}`);
+            if (preview) {
+              preview.innerHTML = `
+                <img src="${s.url}" style="max-height:80px; max-width:100%; border-radius:4px; margin-bottom:4px;" alt="Slide ${s.slideIndex}">
+                <p style="font-size:11px; color:#10b981; font-weight:600;">✓ ${s.fileName}</p>
+                <small style="color:#94a3b8;">${(s.size / 1024).toFixed(0)} KB (from Desktop/${asin})</small>
+              `;
+            }
+          });
+          statusSpan.textContent = `✓ Loaded ${data.slides.length} slides from ${data.folder || '/home/dave/Desktop/' + asin}`;
+          statusSpan.style.color = '#10b981';
+        } else {
+          statusSpan.textContent = `❌ No A+ slide files found in /home/dave/Desktop/${asin}`;
+          statusSpan.style.color = '#ef4444';
+        }
+      } catch (err) {
+        statusSpan.textContent = `❌ Error: ${err.message}`;
+        statusSpan.style.color = '#ef4444';
+      } finally {
+        loadLocalBtn.innerHTML = '<span class="icon">🔍</span> Load Slides from /Desktop';
+      }
+    });
+  }
+
   document.getElementById('applyToAsinBtn').addEventListener('click', () => {
     const asin = prompt('Enter target ASIN for this 7-Slide A+ stack (e.g. B0...):');
     if (asin && asin.trim()) {
@@ -709,21 +747,54 @@ function updatePreviewAsinDropdown(items) {
   if (selectedItem) renderPreviewForItem(selectedItem);
 }
 
-function renderPreviewForItem(item) {
+async function renderPreviewForItem(item) {
   if (!item) return;
   const titleEl = document.getElementById('mockupTitle');
   if (titleEl) titleEl.textContent = item.title || item.sku;
 
-  // Render images if available
-  if (item.images && item.images.length > 0) {
-    const stack = document.getElementById('aplusLiveStack');
-    if (stack) {
-      stack.innerHTML = item.images.map((imgUrl, idx) => `
-        <div style="margin-bottom: 8px; border-radius: 4px; overflow: hidden; background: #000; text-align: center;">
-          <img src="${imgUrl}" alt="Slide ${idx + 1}" style="width: 100%; height: auto; display: block;" onerror="this.parentElement.style.display='none'">
+  const stack = document.getElementById('aplusLiveStack');
+  if (!stack) return;
+
+  stack.innerHTML = `<div style="text-align: center; padding: 30px; color: #94a3b8; font-size: 12px;">Loading A+ Content banners for ${item.asin}...</div>`;
+
+  try {
+    const res = await fetch(`/api/asin-slides/${encodeURIComponent(item.asin)}`);
+    const data = await res.json();
+
+    if (data && data.slides && data.slides.length > 0) {
+      stack.innerHTML = `
+        <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 11px; color: #10b981; display: flex; justify-content: space-between; align-items: center;">
+          <span>✓ Found ${data.slides.length} A+ Graphic Banners in <code>${data.folder || '/home/dave/Desktop/' + item.asin}</code></span>
+          <span style="font-weight: 600;">970 × 600 px Stack</span>
         </div>
-      `).join('');
+        ${data.slides.map((s, idx) => `
+          <div style="margin-bottom: 8px; border-radius: 4px; overflow: hidden; background: #000; text-align: center; border: 1px solid rgba(255, 255, 255, 0.08); box-shadow: 0 4px 12px rgba(0,0,0,0.5);">
+            <img src="${s.url}" alt="A+ Slide ${idx + 1}" style="width: 100%; height: auto; display: block;" loading="lazy">
+            <div style="font-size: 10.5px; color: #94a3b8; padding: 5px 10px; background: #0f172a; display: flex; justify-content: space-between;">
+              <span style="font-weight: 600; color: #f1f5f9;">Module ${idx + 1}: ${s.fileName}</span>
+              <span style="color: #64748b;">${(s.size / 1024).toFixed(0)} KB</span>
+            </div>
+          </div>
+        `).join('')}
+      `;
+    } else {
+      // Per user instruction: do not show product packshots if A+ slides are not found
+      stack.innerHTML = `
+        <div style="padding: 45px 20px; text-align: center; color: #94a3b8; background: rgba(15, 23, 42, 0.6); border-radius: 8px; border: 1px dashed rgba(255, 255, 255, 0.12); margin-top: 10px;">
+          <div style="font-size: 34px; margin-bottom: 10px;">🎨</div>
+          <strong style="color: #ffffff; font-size: 15px; display: block; margin-bottom: 8px;">No A+ Banners Found for ${item.asin}</strong>
+          <p style="font-size: 12px; max-width: 440px; margin: 0 auto 16px; color: #94a3b8; line-height: 1.5;">
+            Product gallery packshots are excluded to avoid confusion. Place your 7 A+ banner graphics (<code>A+1.jpg</code> to <code>A+7.jpg</code>) in:
+          </p>
+          <div style="background: rgba(0,0,0,0.4); padding: 8px 12px; border-radius: 6px; font-family: monospace; font-size: 12px; color: #38bdf8; display: inline-block; margin-bottom: 14px;">
+            /home/dave/Desktop/${item.asin}/
+          </div>
+          <p style="font-size: 11px; color: #64748b;">Or upload slide banners using the 7-Slide Manager tab.</p>
+        </div>
+      `;
     }
+  } catch (err) {
+    stack.innerHTML = `<div style="text-align: center; padding: 30px; color: #ef4444; font-size: 12px;">Failed to load A+ preview: ${err.message}</div>`;
   }
 }
 
@@ -743,6 +814,9 @@ async function fetchConfig() {
     }
     if (data.endpoint && document.getElementById('cfgEndpoint')) {
       document.getElementById('cfgEndpoint').value = data.endpoint;
+    }
+    if (data.assetsDir && document.getElementById('cfgAssetsDir')) {
+      document.getElementById('cfgAssetsDir').value = data.assetsDir;
     }
     if (data.clientIdMasked && data.clientIdMasked !== 'Not Set') {
       document.getElementById('cfgClientId').placeholder = `Configured: ${data.clientIdMasked}`;
@@ -1053,12 +1127,13 @@ function initSettings() {
     const awsRegion = document.getElementById('cfgAwsRegion') ? document.getElementById('cfgAwsRegion').value.trim() : 'eu-west-1';
     const marketplaceId = document.getElementById('cfgMarketplace').value.trim();
     const isSandbox = document.getElementById('cfgSandboxMode').checked;
+    const assetsDir = document.getElementById('cfgAssetsDir') ? document.getElementById('cfgAssetsDir').value.trim() : '';
 
     try {
       const res = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId, clientSecret, refreshToken, sellerId, awsRegion, marketplaceId, isSandbox })
+        body: JSON.stringify({ clientId, clientSecret, refreshToken, sellerId, awsRegion, marketplaceId, isSandbox, assetsDir })
       });
       const data = await res.json();
       showCallout('SP-API settings saved securely to local .env (protected mode 0600)!', 'success');
@@ -1067,6 +1142,36 @@ function initSettings() {
       showCallout('Failed to save settings: ' + err.message, 'error');
     }
   });
+
+  // Instant Auto-Toggle for Sandbox Mode checkbox (No need to submit form!)
+  const sandboxToggle = document.getElementById('cfgSandboxMode');
+  if (sandboxToggle) {
+    sandboxToggle.addEventListener('change', async (e) => {
+      const isSandbox = e.target.checked;
+      const badge = document.getElementById('sandboxBadge');
+      if (badge) {
+        badge.textContent = isSandbox ? '🛡️ Sandbox Simulation' : '🟢 Live SP-API';
+        badge.className = isSandbox ? 'pill-badge pill-sandbox' : 'pill-badge pill-approved';
+      }
+      try {
+        const res = await fetch('/api/toggle-sandbox', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isSandbox })
+        });
+        const data = await res.json();
+        if (data.success) {
+          if (!isSandbox && !data.configured) {
+            showCallout('⚠️ Live Mode enabled, but Amazon SP-API credentials are not set. Live pushes will require valid SP-API credentials.', 'error');
+          } else {
+            showCallout(data.message, isSandbox ? 'info' : 'success');
+          }
+        }
+      } catch (err) {
+        console.error('Failed to toggle sandbox mode:', err);
+      }
+    });
+  }
 
   document.getElementById('syncLiveAmazonBtn').addEventListener('click', async () => {
     const box = document.getElementById('connectionStatusBox');

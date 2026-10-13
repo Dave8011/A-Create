@@ -191,7 +191,9 @@ app.post('/api/clear-listings', (req, res) => {
 
 // 1. Config & Settings
 app.get('/api/config', (req, res) => {
-  res.json(spapi.getConfigSummary());
+  const summary = spapi.getConfigSummary();
+  summary.assetsDir = process.env.APLUS_ASSETS_DIR || '/home/dave/Desktop';
+  res.json(summary);
 });
 
 app.post('/api/config', (req, res) => {
@@ -202,8 +204,13 @@ app.post('/api/config', (req, res) => {
     sellerId, 
     awsRegion, 
     marketplaceId, 
-    isSandbox 
+    isSandbox,
+    assetsDir
   } = req.body;
+
+  if (assetsDir) {
+    process.env.APLUS_ASSETS_DIR = assetsDir.trim();
+  }
 
   spapi.updateConfig({ 
     clientId, 
@@ -223,32 +230,38 @@ app.post('/api/config', (req, res) => {
 
     const updateEnvVar = (key, val) => {
       if (val === undefined || val === null) return;
-      // Protect existing secrets: do not overwrite with empty strings if not provided
-      if (val === '' && (key.includes('SECRET') || key.includes('TOKEN')) && (new RegExp(`^${key}=.+`, 'm')).test(envContent)) {
+      // Protect existing credentials: do not overwrite with empty strings if not provided
+      if (val === '' && (key.includes('SECRET') || key.includes('TOKEN') || key.includes('CLIENT_ID') || key.includes('SELLER_ID')) && (new RegExp(`^${key}=.+`, 'm')).test(envContent)) {
         return;
       }
       const regex = new RegExp(`^${key}=.*$`, 'm');
       if (regex.test(envContent)) {
-        envContent = envContent.replace(regex, `${key}="${val || ''}"`);
+        envContent = envContent.replace(regex, `${key}="${val !== undefined ? val : ''}"`);
       } else {
-        envContent += `\n${key}="${val || ''}"`;
+        envContent += `\n${key}="${val !== undefined ? val : ''}"`;
       }
     };
 
+    if (assetsDir) updateEnvVar('APLUS_ASSETS_DIR', assetsDir.trim());
+
     // 1. Primary EU_* credentials
-    if (clientId !== undefined) updateEnvVar('EU_SELLING_PARTNER_APP_CLIENT_ID', clientId);
+    if (clientId !== undefined && clientId !== '') updateEnvVar('EU_SELLING_PARTNER_APP_CLIENT_ID', clientId);
     if (clientSecret !== undefined && clientSecret !== '') updateEnvVar('EU_SELLING_PARTNER_APP_CLIENT_SECRET', clientSecret);
     if (refreshToken !== undefined && refreshToken !== '') updateEnvVar('EU_REFRESH_TOKEN', refreshToken);
-    if (sellerId !== undefined) updateEnvVar('EU_SELLER_ID', sellerId);
-    if (awsRegion !== undefined) updateEnvVar('EU_AWS_REGION', awsRegion || 'eu-west-1');
-    if (marketplaceId !== undefined) updateEnvVar('EU_MARKETPLACE_ID', marketplaceId || INDIA_MARKETPLACE_ID);
+    if (sellerId !== undefined && sellerId !== '') updateEnvVar('EU_SELLER_ID', sellerId);
+    if (awsRegion !== undefined && awsRegion !== '') updateEnvVar('EU_AWS_REGION', awsRegion || 'eu-west-1');
+    if (marketplaceId !== undefined && marketplaceId !== '') updateEnvVar('EU_MARKETPLACE_ID', marketplaceId || INDIA_MARKETPLACE_ID);
 
     // 2. Standard SP_API_* aliases for maximum compatibility
-    if (clientId !== undefined) updateEnvVar('SP_API_CLIENT_ID', clientId);
+    if (clientId !== undefined && clientId !== '') updateEnvVar('SP_API_CLIENT_ID', clientId);
     if (clientSecret !== undefined && clientSecret !== '') updateEnvVar('SP_API_CLIENT_SECRET', clientSecret);
     if (refreshToken !== undefined && refreshToken !== '') updateEnvVar('SP_API_REFRESH_TOKEN', refreshToken);
-    if (marketplaceId !== undefined) updateEnvVar('SP_API_MARKETPLACE_ID', marketplaceId || INDIA_MARKETPLACE_ID);
-    if (isSandbox !== undefined) updateEnvVar('SP_API_SANDBOX', isSandbox !== false);
+    if (marketplaceId !== undefined && marketplaceId !== '') updateEnvVar('SP_API_MARKETPLACE_ID', marketplaceId || INDIA_MARKETPLACE_ID);
+    if (isSandbox !== undefined) {
+      const sandboxStr = isSandbox ? 'true' : 'false';
+      updateEnvVar('SP_API_SANDBOX', sandboxStr);
+      process.env.SP_API_SANDBOX = sandboxStr;
+    }
 
     fs.writeFileSync(envPath, envContent.trim() + '\n', { mode: 0o600 });
     try {
@@ -259,6 +272,34 @@ app.post('/api/config', (req, res) => {
   }
 
   res.json({ success: true, config: spapi.getConfigSummary() });
+});
+
+// Instant Toggle for Sandbox Mode
+app.post('/api/toggle-sandbox', (req, res) => {
+  const { isSandbox } = req.body;
+  const flag = Boolean(isSandbox);
+  spapi.updateConfig({ isSandbox: flag });
+  process.env.SP_API_SANDBOX = flag ? 'true' : 'false';
+
+  try {
+    const envPath = path.join(__dirname, '.env');
+    let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
+    const regex = new RegExp(`^SP_API_SANDBOX=.*$`, 'm');
+    if (regex.test(envContent)) {
+      envContent = envContent.replace(regex, `SP_API_SANDBOX=${flag}`);
+    } else {
+      envContent += `\nSP_API_SANDBOX=${flag}`;
+    }
+    fs.writeFileSync(envPath, envContent.trim() + '\n', { mode: 0o600 });
+  } catch (_) {}
+
+  const summary = spapi.getConfigSummary();
+  res.json({
+    success: true,
+    isSandbox: flag,
+    configured: summary.configured,
+    message: flag ? '🛡️ Sandbox Simulation Mode enabled' : '🟢 Live Amazon SP-API Mode activated!'
+  });
 });
 
 app.post('/api/test-connection', async (req, res) => {
@@ -603,6 +644,100 @@ app.post('/api/validate-slide-layout', (req, res) => {
   });
 });
 
+// Helper: Discover local A+ banner files (A+1.jpg to A+7.jpg) for a given ASIN
+function getAplusSlideFilesForAsin(asin, customBaseDir = null) {
+  if (!asin) return [];
+  const baseDir = customBaseDir || process.env.APLUS_ASSETS_DIR || '/home/dave/Desktop';
+  const candidateDirs = [
+    path.join(baseDir, asin),
+    path.join(baseDir, asin.toUpperCase()),
+    path.join(baseDir, asin.toLowerCase()),
+    path.join(UPLOADS_DIR, asin)
+  ];
+
+  let targetDir = null;
+  for (const d of candidateDirs) {
+    if (fs.existsSync(d)) {
+      try {
+        if (fs.statSync(d).isDirectory()) {
+          targetDir = d;
+          break;
+        }
+      } catch (_) {}
+    }
+  }
+
+  if (!targetDir) return [];
+
+  try {
+    const filesInDir = fs.readdirSync(targetDir);
+    const slides = [];
+
+    for (let i = 1; i <= 7; i++) {
+      // Matches A+1.jpg, A+1.png, a+1.jpeg, Slide1.jpg, 01.jpg, 1.jpg
+      const patterns = [
+        new RegExp('^A\\+' + i + '\\.(jpe?g|png)$', 'i'),
+        new RegExp('^Slide[-_ ]?' + i + '\\.(jpe?g|png)$', 'i'),
+        new RegExp('^0?' + i + '[-_ ].*\\.(jpe?g|png)$', 'i'),
+        new RegExp('^0?' + i + '\\.(jpe?g|png)$', 'i')
+      ];
+
+      let matchedFile = null;
+      for (const pat of patterns) {
+        matchedFile = filesInDir.find(f => pat.test(f));
+        if (matchedFile) break;
+      }
+
+      if (matchedFile) {
+        const fullPath = path.join(targetDir, matchedFile);
+        const stats = fs.statSync(fullPath);
+        slides.push({
+          slideIndex: i,
+          fileName: matchedFile,
+          fullPath,
+          size: stats.size,
+          dir: targetDir
+        });
+      }
+    }
+
+    return slides;
+  } catch (err) {
+    console.warn(`Could not read A+ directory ${targetDir}:`, err.message);
+    return [];
+  }
+}
+
+// Route: Get metadata and URLs of local A+ slides for an ASIN
+app.get('/api/asin-slides/:asin', (req, res) => {
+  const { asin } = req.params;
+  const slides = getAplusSlideFilesForAsin(asin);
+  res.json({
+    asin,
+    hasLocalSlides: slides.length > 0,
+    slideCount: slides.length,
+    baseDir: process.env.APLUS_ASSETS_DIR || '/home/dave/Desktop',
+    folder: slides[0] ? slides[0].dir : null,
+    slides: slides.map(s => ({
+      slideIndex: s.slideIndex,
+      fileName: s.fileName,
+      size: s.size,
+      url: `/api/asin-slide-image/${encodeURIComponent(asin)}/${s.slideIndex}`
+    }))
+  });
+});
+
+// Route: Stream local A+ slide image
+app.get('/api/asin-slide-image/:asin/:slideNum', (req, res) => {
+  const { asin, slideNum } = req.params;
+  const slides = getAplusSlideFilesForAsin(asin);
+  const target = slides.find(s => s.slideIndex === parseInt(slideNum, 10));
+  if (target && fs.existsSync(target.fullPath)) {
+    return res.sendFile(target.fullPath);
+  }
+  res.status(404).send('A+ slide image not found');
+});
+
 // 6. Start Bulk Update Processing Job
 app.post('/api/start-bulk-batch', async (req, res) => {
   const { asins, items: clientItems, templateType = '7_SLIDE_STACK', options = {} } = req.body;
@@ -684,30 +819,37 @@ app.post('/api/start-bulk-batch', async (req, res) => {
       currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] 🚀 ${item.asin} (${item.sku || 'N/A'}) - Starting Amazon A+ pipeline...`);
 
       try {
-        // Step A: Prepare 7 modules with image destinations
+        // Step A: Discover real local A+ banner graphics (A+1.jpg to A+7.jpg) in /home/dave/Desktop/{ASIN}
+        const localSlides = getAplusSlideFilesForAsin(item.asin);
+        if (localSlides.length > 0) {
+          currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] 📁 Found ${localSlides.length} local A+ banners in ${localSlides[0].dir} (${localSlides.map(s => s.fileName).join(', ')})`);
+        } else {
+          currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ℹ️ No local A+ folder in /home/dave/Desktop/${item.asin}/. Generating standardized layout.`);
+        }
+
         const slides = [];
-        const imageUrls = (item.images && Array.isArray(item.images)) ? item.images : [];
 
         for (let sIdx = 0; sIdx < 7; sIdx++) {
-          const imgUrl = imageUrls[sIdx] || imageUrls[0] || null;
+          const slideNum = sIdx + 1;
+          const matchingLocalSlide = localSlides.find(s => s.slideIndex === slideNum);
           let imgBuf = null;
 
-          if (imgUrl && !spapi.isSandbox) {
-            try {
-              const imgRes = await axios.get(imgUrl, { responseType: 'arraybuffer', timeout: 8000 });
-              imgBuf = Buffer.from(imgRes.data);
-            } catch (imgErr) {
-              console.warn(`[Image Fetch] Could not download image for ${item.asin} slide ${sIdx + 1}: ${imgErr.message}`);
-            }
+          if (matchingLocalSlide && fs.existsSync(matchingLocalSlide.fullPath)) {
+            imgBuf = fs.readFileSync(matchingLocalSlide.fullPath);
           }
 
+          // Request Amazon SP-API upload destination and upload the real A+ image to S3
           const dest = await spapi.createUploadDestination(imgBuf, 'image/jpeg');
 
           slides.push({
             uploadDestinationId: dest.uploadDestinationId,
-            title: `Module ${sIdx + 1}`,
-            altText: `${item.title || item.asin} feature ${sIdx + 1}`
+            title: `Module ${slideNum}`,
+            altText: `${item.title || item.asin} slide ${slideNum}`
           });
+
+          if (matchingLocalSlide && imgBuf) {
+            currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] ⬆️ Module ${slideNum}: Uploaded ${matchingLocalSlide.fileName} (${(imgBuf.length / 1024).toFixed(0)} KB) to Amazon S3`);
+          }
         }
 
         // Step B: Build A+ Document
