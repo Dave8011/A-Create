@@ -8,6 +8,7 @@
 node_modules/
 
 # Local Data & Uploads
-data/
+data/*
+!data/listings.json
 uploads/
 *.log

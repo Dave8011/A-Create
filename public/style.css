@@ -1458,3 +1458,64 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* Refresh Spinner Animation */
+@keyframes spinClockwise {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spinning {
+  display: inline-block !important;
+  animation: spinClockwise 0.8s linear infinite !important;
+}
+
+/* Modern Floating Toast Notification */
+.app-toast {
+  pointer-events: auto;
+  min-width: 280px;
+  max-width: 440px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transform: translateY(20px);
+  opacity: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.app-toast.show {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.app-toast.success {
+  background: #064e3b;
+  color: #a7f3d0;
+  border-color: #059669;
+}
+
+.app-toast.info {
+  background: #1e293b;
+  color: #e2e8f0;
+  border-color: #3b82f6;
+}
+
+.app-toast.error {
+  background: #7f1d1d;
+  color: #fecaca;
+  border-color: #dc2626;
+}
+
+.app-toast a {
+  color: #38bdf8;
+  text-decoration: underline;
+  font-weight: 600;
+}
+

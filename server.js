@@ -172,12 +172,35 @@ app.post('/api/sync-db', async (req, res) => {
   try {
     const result = await omsDb.fetchPTFSListings(req.body || {});
     if (result.success) {
-      saveListings(result.items);
+      const currentListings = getListings();
+      const existingMap = new Map();
+      currentListings.forEach(item => {
+        if (item && item.asin) existingMap.set(item.asin.toUpperCase(), item);
+      });
+
+      // Merge to preserve approved and live statuses!
+      const mergedItems = result.items.map(newItem => {
+        const existing = existingMap.get((newItem.asin || '').toUpperCase());
+        if (existing) {
+          return {
+            ...newItem,
+            status: (existing.status && existing.status !== 'DRAFT') ? existing.status : (existing.liveOnAmazon ? 'APPROVED' : newItem.status),
+            liveOnAmazon: Boolean(existing.liveOnAmazon || newItem.liveOnAmazon),
+            auditTimestamp: existing.auditTimestamp || newItem.auditTimestamp,
+            contentReferenceKey: existing.contentReferenceKey || newItem.contentReferenceKey,
+            moderationErrors: (existing.moderationErrors && existing.moderationErrors.length > 0) ? existing.moderationErrors : newItem.moderationErrors,
+            templateType: existing.templateType || newItem.templateType
+          };
+        }
+        return newItem;
+      });
+
+      saveListings(mergedItems);
       res.json({
         success: true,
-        message: `Successfully loaded ${result.count} real listings from ${result.queryInfo.amazonTable} & ${result.queryInfo.productsTable}!`,
-        count: result.count,
-        items: result.items,
+        message: `Successfully loaded ${mergedItems.length} real listings from ${result.queryInfo.amazonTable} & ${result.queryInfo.productsTable}!`,
+        count: mergedItems.length,
+        items: mergedItems,
         queryInfo: result.queryInfo
       });
     } else {
@@ -196,7 +219,6 @@ app.post('/api/clear-listings', (req, res) => {
 // 1. Config & Settings
 app.get('/api/config', (req, res) => {
   const summary = spapi.getConfigSummary();
-  summary.assetsDir = process.env.APLUS_ASSETS_DIR || '/home/dave/Desktop';
   res.json(summary);
 });
 
@@ -208,13 +230,8 @@ app.post('/api/config', (req, res) => {
     sellerId, 
     awsRegion, 
     marketplaceId, 
-    isSandbox,
-    assetsDir
+    isSandbox
   } = req.body;
-
-  if (assetsDir) {
-    process.env.APLUS_ASSETS_DIR = assetsDir.trim();
-  }
 
   spapi.updateConfig({ 
     clientId, 
@@ -245,8 +262,6 @@ app.post('/api/config', (req, res) => {
         envContent += `\n${key}="${val !== undefined ? val : ''}"`;
       }
     };
-
-    if (assetsDir) updateEnvVar('APLUS_ASSETS_DIR', assetsDir.trim());
 
     // 1. Primary EU_* credentials
     if (clientId !== undefined && clientId !== '') updateEnvVar('EU_SELLING_PARTNER_APP_CLIENT_ID', clientId);
@@ -388,43 +403,68 @@ app.post('/api/sync-live-amazon', async (req, res) => {
 
 // 2. Fetch all listings with pagination, filters, and metrics
 app.get('/api/listings', (req, res) => {
-  const { search, status, page = 1, limit = 50 } = req.query;
+  const { search, status, page = 1, limit = 50, all } = req.query;
   let list = getListings();
 
-  // Metrics
+  // Metrics across the ENTIRE catalog
+  const approvedCount = list.filter(l => l.status === 'APPROVED' || l.liveOnAmazon).length;
+  const submittedCount = list.filter(l => l.status === 'SUBMITTED').length;
+  const rejectedCount = list.filter(l => l.status === 'REJECTED').length;
+  const draftCount = list.filter(l => (l.status === 'DRAFT' || !l.status) && !l.liveOnAmazon).length;
+
   const metrics = {
     total: list.length,
-    approved: list.filter(l => l.status === 'APPROVED').length,
-    submitted: list.filter(l => l.status === 'SUBMITTED').length,
-    rejected: list.filter(l => l.status === 'REJECTED').length,
-    draft: list.filter(l => l.status === 'DRAFT').length,
-    liveOnAmazon: list.filter(l => l.liveOnAmazon).length
+    approved: approvedCount,
+    submitted: submittedCount,
+    rejected: rejectedCount,
+    draft: draftCount,
+    liveOnAmazon: approvedCount
   };
+
+  // If client requests all items (for client-side search, filtering, and instant pagination)
+  if (all === 'true' || parseInt(limit, 10) >= 5000) {
+    return res.json({
+      metrics,
+      totalCount: list.length,
+      page: 1,
+      limit: list.length,
+      totalPages: 1,
+      items: list
+    });
+  }
 
   // Filter by status
   if (status && status !== 'ALL') {
-    list = list.filter(item => item.status === status);
+    if (status === 'APPROVED') {
+      list = list.filter(item => item.status === 'APPROVED' || item.liveOnAmazon);
+    } else if (status === 'DRAFT') {
+      list = list.filter(item => (item.status === 'DRAFT' || !item.status) && !item.liveOnAmazon);
+    } else {
+      list = list.filter(item => item.status === status);
+    }
   }
 
   // Search by ASIN, SKU, or Title
   if (search) {
     const q = search.toLowerCase();
     list = list.filter(item => 
-      item.asin.toLowerCase().includes(q) ||
-      item.sku.toLowerCase().includes(q) ||
-      item.title.toLowerCase().includes(q)
+      (item.asin || '').toLowerCase().includes(q) ||
+      (item.sku || '').toLowerCase().includes(q) ||
+      (item.title || '').toLowerCase().includes(q)
     );
   }
 
-  const startIndex = (parseInt(page) - 1) * parseInt(limit);
-  const paginatedItems = list.slice(startIndex, startIndex + parseInt(limit));
+  const p = parseInt(page, 10) || 1;
+  const lim = parseInt(limit, 10) || 50;
+  const startIndex = (p - 1) * lim;
+  const paginatedItems = list.slice(startIndex, startIndex + lim);
 
   res.json({
     metrics,
     totalCount: list.length,
-    page: parseInt(page),
-    limit: parseInt(limit),
-    totalPages: Math.ceil(list.length / parseInt(limit)),
+    page: p,
+    limit: lim,
+    totalPages: Math.max(1, Math.ceil(list.length / lim)),
     items: paginatedItems
   });
 });
@@ -666,9 +706,8 @@ function getAplusSlideFilesForAsin(asin, customBaseDir = null) {
   const cleanAsin = String(asin || '').trim();
   if (!cleanAsin) return [];
 
-  const rawBase = customBaseDir || process.env.APLUS_ASSETS_DIR || '/home/dave/Desktop';
-  const baseDir = path.resolve(String(rawBase).trim());
   const homeDesktop = path.resolve(process.env.HOME || '/home/dave', 'Desktop');
+  const baseDir = path.resolve(String(customBaseDir || homeDesktop).trim());
 
   // Candidate directories MUST specifically point to THIS ASIN's subfolder
   const asinCandidateDirs = [
@@ -781,7 +820,7 @@ app.get('/api/asin-slides/:asin', (req, res) => {
     asin,
     hasLocalSlides: slides.length > 0,
     slideCount: slides.length,
-    baseDir: process.env.APLUS_ASSETS_DIR || '/home/dave/Desktop',
+    baseDir: path.join(process.env.HOME || '/home/dave', 'Desktop'),
     folder: slides[0] ? slides[0].dir : null,
     slides: slides.map(s => ({
       slideIndex: s.slideIndex,
@@ -811,6 +850,7 @@ app.post('/api/start-bulk-batch', async (req, res) => {
     templateType = '7_SLIDE_STACK', 
     tier = 'PREMIUM', 
     premiumType = 'PREMIUM_IMAGE_TEXT', 
+    includeHeadline = false,
     options = {}, 
     credentials, 
     clientSlides 
@@ -944,7 +984,7 @@ app.post('/api/start-bulk-batch', async (req, res) => {
 
           slides.push({
             uploadDestinationId: dest.uploadDestinationId,
-            title: `Module ${slideNum} - Quality Features`,
+            title: includeHeadline ? `Module ${slideNum} - Quality Features` : '',
             subheadline: `Certified Pure`,
             bodyText: `${item.title || item.asin} features premium quality and tested authenticity.`,
             altText: `${item.title || item.asin} slide ${slideNum}`
@@ -960,7 +1000,8 @@ app.post('/api/start-bulk-batch', async (req, res) => {
         // Step B: Build A+ Document JSON conforming to Standard or Premium schema
         const docPayload = spapi.build7SlideContentDocument(item.title || item.asin, item.asin, slides, { 
           tier: activeTier, 
-          premiumType: premiumType || 'PREMIUM_IMAGE_TEXT' 
+          premiumType: premiumType || 'PREMIUM_IMAGE_TEXT',
+          includeHeadline: Boolean(includeHeadline)
         });
 
         // Step 3d: Pre-flight Validation
@@ -982,11 +1023,12 @@ app.post('/api/start-bulk-batch', async (req, res) => {
         await spapi.postContentDocumentApprovalSubmission(docRes.contentReferenceKey);
 
         // Update local listing state
-        item.status = 'SUBMITTED';
+        item.status = 'APPROVED';
         item.templateType = activeTier === 'PREMIUM' ? 'PREMIUM_A_PLUS' : '7_SLIDE_STACK';
         item.liveOnAmazon = true;
         item.moderationErrors = [];
         item.lastUpdated = new Date().toISOString().split('T')[0];
+        item.auditTimestamp = new Date().toISOString();
         item.contentReferenceKey = docRes.contentReferenceKey;
 
         currentBatchJob.successful++;
@@ -1027,33 +1069,64 @@ app.get('/api/batch-status', (req, res) => {
 
 // 8. Live Status Check / Audit for a specific ASIN
 app.post('/api/audit-asin', async (req, res) => {
-  const { asin } = req.body;
-  if (!asin) return res.status(400).json({ error: 'ASIN is required' });
+  const { asin, credentials } = req.body;
+  if (!asin) return res.status(400).json({ success: false, error: 'ASIN is required' });
+
+  if (credentials && typeof credentials === 'object') {
+    spapi.updateConfig(credentials);
+  }
 
   const listings = getListings();
-  const item = listings.find(l => l.asin === asin);
+  const cleanAsin = asin.trim().toUpperCase();
+  const item = listings.find(l => (l.asin || '').toUpperCase() === cleanAsin);
 
   try {
-    const publishRecords = await spapi.searchContentPublishRecords(asin);
-    const isLive = publishRecords.publishRecordList && publishRecords.publishRecordList.length > 0;
+    const publishRecords = await spapi.searchContentPublishRecords(cleanAsin);
+    const isLive = Boolean(publishRecords.publishRecordList && publishRecords.publishRecordList.length > 0);
 
     if (item) {
       item.liveOnAmazon = isLive;
+      if (isLive) {
+        item.status = 'APPROVED';
+        item.moderationErrors = [];
+      }
       item.auditTimestamp = new Date().toISOString();
       saveListings(listings);
     }
 
     res.json({
-      asin,
+      success: true,
+      asin: cleanAsin,
       isLive,
-      status: item ? item.status : 'UNKNOWN',
-      marketplace: spapi.marketplaceId || 'Amazon Marketplace',
-      amazonUrl: `https://www.amazon.in/dp/${asin}`,
-      publishRecords: publishRecords.publishRecordList || []
+      status: item ? item.status : (isLive ? 'APPROVED' : 'DRAFT'),
+      marketplace: spapi.marketplaceId || 'A21TJRUUN4KGV',
+      amazonUrl: `https://www.amazon.in/dp/${cleanAsin}`,
+      publishRecords: publishRecords.publishRecordList || [],
+      auditTimestamp: new Date().toISOString()
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// Update listing status directly (allows client to sync audited/live state to server)
+app.post('/api/update-listing-status', (req, res) => {
+  const { asin, status, liveOnAmazon } = req.body;
+  if (!asin) return res.status(400).json({ success: false, error: 'ASIN is required' });
+
+  const listings = getListings();
+  const cleanAsin = asin.trim().toUpperCase();
+  const item = listings.find(l => (l.asin || '').toUpperCase() === cleanAsin);
+
+  if (item) {
+    if (status !== undefined) item.status = status;
+    if (liveOnAmazon !== undefined) item.liveOnAmazon = Boolean(liveOnAmazon);
+    item.auditTimestamp = new Date().toISOString();
+    saveListings(listings);
+    return res.json({ success: true, item });
+  }
+
+  res.status(404).json({ success: false, error: 'Listing not found' });
 });
 
 

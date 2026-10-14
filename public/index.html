@@ -102,9 +102,6 @@
       <button class="nav-tab" data-tab="queue-tab">
         <span class="tab-icon">⚡</span> Bulk Queue & Rate-Limiter
       </button>
-      <button class="nav-tab" data-tab="preview-tab">
-        <span class="tab-icon">📱</span> Live A+ Product Preview
-      </button>
       <button class="nav-tab" data-tab="settings-tab">
         <span class="tab-icon">⚙️</span> Database & SP-API Settings
       </button>
@@ -128,14 +125,11 @@
           </div>
 
           <div class="toolbar-actions">
-            <button id="openSkuAsinUploadBtn" class="btn btn-primary btn-sm" title="Upload a simple 2-column CSV or TXT file with SKU and ASIN">
-              <span class="icon">📄</span> Upload SKU & ASIN File
+            <button id="batchSelectedBtn" class="btn btn-primary btn-sm" disabled title="Publish A+ content to selected ASINs">
+              <span class="icon">🚀</span> Push Selected (<span id="selectedCount">0</span>)
             </button>
-            <button id="batchSelectedBtn" class="btn btn-secondary btn-sm" disabled>
-              Update Selected (<span id="selectedCount">0</span>)
-            </button>
-            <button id="downloadCsvBtn" class="btn btn-outline btn-sm" title="Download sample template for SKU and ASIN">
-              📥 Sample CSV
+            <button id="auditSelectedBtn" class="btn btn-secondary btn-sm" disabled title="Audit live status on amazon.in for selected ASINs">
+              <span class="icon">🔍</span> Audit Selected
             </button>
             <button id="clearListingsBtn" class="btn btn-outline btn-sm" title="Clear all loaded listings from matrix and local memory" style="color: #94a3b8; border-color: #475569;">
               <span class="icon">🗑️</span> Clear
@@ -193,10 +187,14 @@
                   <option value="STANDARD">📑 Standard A+ (EBC)</option>
                 </select>
                 <select id="premiumModuleTypeSelect" class="form-input" style="font-size: 12px; padding: 4px 8px; width: auto; background: #1e293b; color: #f8fafc;">
-                  <option value="PREMIUM_IMAGE_TEXT" selected>💎 Premium Image & Text (1440×1080)</option>
-                  <option value="PREMIUM_FULL_BACKGROUND_IMAGE">🖼️ Premium Full Banner (1464×600)</option>
+                  <option value="PREMIUM_FULL_BACKGROUND_IMAGE" selected>🖼️ Premium Full Banner (1464×600)</option>
+                  <option value="PREMIUM_IMAGE_TEXT">💎 Premium Image & Text (1440×1080)</option>
                   <option value="PREMIUM_FULL_BACKGROUND_TEXT">📜 Premium Text Overlay (1464×600)</option>
                 </select>
+                <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#cbd5e1; cursor:pointer; user-select:none; margin-left:4px;">
+                  <input type="checkbox" id="includeBannerHeadline" style="accent-color:var(--primary); cursor:pointer;">
+                  <span>Include Headline ("Module 2 - Quality Features")</span>
+                </label>
               </div>
             </div>
 
@@ -429,6 +427,15 @@
               <option value="PREMIUM" selected>💎 Premium A+ (EBC)</option>
               <option value="STANDARD">📑 Standard A+ (EBC)</option>
             </select>
+            <select id="queuePremiumTypeSelect" class="form-input" style="font-size: 12px; padding: 6px 10px; width: auto; background: #1e293b; color: #f8fafc;">
+              <option value="PREMIUM_FULL_BACKGROUND_IMAGE" selected>🖼️ Premium Full Banner (1464×600)</option>
+              <option value="PREMIUM_IMAGE_TEXT">💎 Premium Image & Text (1440×1080)</option>
+              <option value="PREMIUM_FULL_BACKGROUND_TEXT">📜 Premium Text Overlay (1464×600)</option>
+            </select>
+            <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#cbd5e1; cursor:pointer; user-select:none;">
+              <input type="checkbox" id="queueIncludeBannerHeadline" style="accent-color:var(--primary); cursor:pointer;">
+              <span>Include Headline</span>
+            </label>
             <button id="startBulkAllBtn" class="btn btn-primary">
               <span class="icon">▶️</span> Start Bulk Catalog Update
             </button>
@@ -482,160 +489,7 @@
       </div>
     </main>
 
-    <!-- Tab 4: Visual A+ Product Detail Page Previewer -->
-    <main id="preview-tab" class="tab-content">
-      <div class="preview-layout">
-        <div class="preview-sidebar">
-          <div class="card">
-            <h3 class="card-title">Preview Controls</h3>
-            <p class="card-desc">Inspect how the 7-slide layout appears to customers on Amazon India.</p>
 
-            <div class="form-group">
-              <label class="form-label">Select ASIN to Preview</label>
-              <select id="previewAsinSelect" class="form-input">
-                <option value="">-- Load or import listings to preview --</option>
-              </select>
-            </div>
-
-            <div class="preview-device-toggle">
-              <button class="device-btn active" data-device="desktop">
-                💻 Desktop (970px)
-              </button>
-              <button class="device-btn" data-device="mobile">
-                📱 Mobile View
-              </button>
-            </div>
-
-            <div class="asin-quick-meta">
-              <div class="meta-row">
-                <span>Marketplace:</span>
-                <strong>amazon.in</strong>
-              </div>
-              <div class="meta-row">
-                <span>A+ Type:</span>
-                <strong>Standard EBC (7 Slides)</strong>
-              </div>
-              <div class="meta-row">
-                <span>Status:</span>
-                <span class="pill-badge pill-approved">APPROVED / LIVE</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="preview-canvas-container">
-          <div class="amazon-mockup desktop-frame" id="mockupFrame">
-            <div class="amazon-mockup-header">
-              <div class="amz-logo">amazon<span>.in</span></div>
-              <div class="amz-search-bar">Search Amazon.in</div>
-            </div>
-
-            <!-- Product Header Mock -->
-            <div class="amz-prod-header">
-              <h2 id="mockupTitle">Certified Organic Fennel Seed (Saunf) - Naturally Aromatic, 500g</h2>
-              <div class="amz-stars">⭐⭐⭐⭐⭐ <span class="review-count">1,482 ratings</span> | <span class="badge-choice">Amazon's Choice</span></div>
-              <div class="amz-price">₹289 <span class="amz-tax">(Inclusive of all taxes)</span></div>
-            </div>
-
-            <div class="amz-divider"></div>
-            <div class="amz-section-title">From the Manufacturer (A+ Enhanced Content)</div>
-
-            <!-- 7-Slide Live Stack Container -->
-            <div class="aplus-live-stack" id="aplusLiveStack">
-              <!-- Slide 1 -->
-              <div class="aplus-module-banner banner-1">
-                <div class="banner-overlay-content">
-                  <span class="tag-organic">CERTIFIED ORGANIC</span>
-                  <h2>FENNEL SEED (SAUNF)</h2>
-                  <span class="tag-sub">NATURALLY AROMATIC</span>
-                </div>
-              </div>
-
-              <!-- Slide 2 -->
-              <div class="aplus-module-banner banner-2">
-                <div class="banner-grid-4">
-                  <div class="banner-feature">
-                    <span class="bf-icon">🚫</span>
-                    <strong>NO PESTICIDES & HARMFUL CHEMICALS</strong>
-                  </div>
-                  <div class="banner-feature">
-                    <span class="bf-icon">🔬</span>
-                    <strong>STRINGENT LABORATORY TESTING</strong>
-                  </div>
-                  <div class="banner-feature">
-                    <span class="bf-icon">📋</span>
-                    <strong>TRACEABILITY & TRANSPARENCY</strong>
-                  </div>
-                  <div class="banner-feature">
-                    <span class="bf-icon">🌱</span>
-                    <strong>SUPPORTING ORGANIC FARMING</strong>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Slide 3 -->
-              <div class="aplus-module-banner banner-3">
-                <div class="banner-freefrom">
-                  <h3>FREE FROM</h3>
-                  <ul>
-                    <li>✓ ARTIFICIAL COLORS</li>
-                    <li>✓ PRESERVATIVES</li>
-                    <li>✓ GMOS</li>
-                  </ul>
-                </div>
-              </div>
-
-              <!-- Slide 4 -->
-              <div class="aplus-module-banner banner-4">
-                <div class="banner-cert-why">
-                  <div class="seal-badge">CERTIFIED ORGANIC PRODUCT</div>
-                  <div class="seal-text">
-                    <h3>WHY ORGANIC CERTIFICATION IS IMPORTANT?</h3>
-                    <p>Certified Organic ensures the product is really organic. It ensures the product does not get any contamination till it reaches your hands.</p>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Slide 5 -->
-              <div class="aplus-module-banner banner-5">
-                <div class="banner-gov-cert">
-                  <h3>OUR CERTIFICATION</h3>
-                  <div class="cert-logos">
-                    <span class="logo-box-cert">fssai 10017022006293</span>
-                    <span class="logo-box-cert">India Organic (NPOP)</span>
-                    <span class="logo-box-cert">FOODCHAIN ID</span>
-                  </div>
-                  <span class="purity-tag">PURITY YOU CAN TRACE</span>
-                </div>
-              </div>
-
-              <!-- Slide 6 -->
-              <div class="aplus-module-banner banner-6">
-                <div class="banner-usage-title">EXPLORE THE VERSATILE WAYS OF USE</div>
-                <div class="usage-grid">
-                  <div class="usage-tile"><span>DIRECT AFTER MEALS</span></div>
-                  <div class="usage-tile"><span>AROMATIC MUKHWAS</span></div>
-                  <div class="usage-tile"><span>HERBAL TEA INFUSION</span></div>
-                  <div class="usage-tile"><span>CULINARY & CURRY SPICE</span></div>
-                </div>
-              </div>
-
-              <!-- Slide 7 -->
-              <div class="aplus-module-banner banner-7">
-                <div class="banner-footer-cta">
-                  <h3>ENJOY THE BEST TASTE WITH GOODNESS OF ORGANIC</h3>
-                  <ul>
-                    <li>✓ Handpicked premium seeds</li>
-                    <li>✓ Retains essential aromatic oils</li>
-                    <li>✓ Freshly sealed zipper pouch</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </main>
 
     <!-- Tab 5: Settings (OMS Database & SP-API) -->
     <main id="settings-tab" class="tab-content">
@@ -849,12 +703,6 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label">A+ Local Graphics Base Directory <code style="font-size: 10px; color: var(--primary);">APLUS_ASSETS_DIR</code></label>
-            <input type="text" id="cfgAssetsDir" class="form-input" value="/home/dave/Desktop" placeholder="/home/dave/Desktop">
-            <small style="color: var(--text-muted); font-size: 11px; margin-top: 4px; display: block;">Local folder containing ASIN directories with <code>A+1.jpg</code> to <code>A+7.jpg</code> (e.g. <code>/home/dave/Desktop/B09LYW9P2F/A+1.jpg</code>).</small>
-          </div>
-
-          <div class="form-group">
             <label class="checkbox-label">
               <input type="checkbox" id="cfgSandboxMode">
               <span>Enable Sandbox Simulation Mode (Test workflows safely without altering live Amazon catalog)</span>
@@ -878,6 +726,20 @@
         </form>
 
         <div id="connectionStatusBox" class="status-callout" style="display: none;"></div>
+      </div>
+
+      <!-- 3. Manual Catalog Import & Template Tools -->
+      <div class="card settings-card" style="margin-top: 24px;">
+        <h2 class="card-title">📄 Manual Catalog Import & CSV Templates</h2>
+        <p class="card-desc">Import ASIN & SKU records manually via file upload, or download clean starter templates.</p>
+        <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 14px;">
+          <button type="button" id="openSkuAsinUploadBtn" class="btn btn-primary btn-sm" title="Upload CSV or TXT file with SKU and ASIN">
+            <span class="icon">📄</span> Upload SKU & ASIN File (CSV / TXT)
+          </button>
+          <button type="button" id="downloadCsvBtn" class="btn btn-outline btn-sm" title="Download sample template for SKU and ASIN">
+            <span class="icon">📥</span> Download Sample CSV Template
+          </button>
+        </div>
       </div>
     </main>
 
@@ -991,6 +853,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" style="position: fixed; bottom: 24px; right: 24px; z-index: 99999; display: flex; flex-direction: column; gap: 10px; pointer-events: none;"></div>
 
   <!-- Scripts -->
   <script src="app.js"></script>

@@ -24,6 +24,37 @@ const STORAGE_KEYS = {
   DB: 'aplus_db_credentials'
 };
 
+// Modern Floating Toast Notification
+function showToast(message, type = 'info', duration = 4500) {
+  let container = document.getElementById('toastContainer');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toastContainer';
+    container.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:99999;display:flex;flex-direction:column;gap:10px;pointer-events:none;';
+    document.body.appendChild(container);
+  }
+
+  const toast = document.createElement('div');
+  toast.className = `app-toast ${type}`;
+  toast.innerHTML = `
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span style="font-size:16px;">${type === 'success' ? '✅' : (type === 'error' ? '❌' : 'ℹ️')}</span>
+      <div style="font-size:13px; line-height:1.4;">${message}</div>
+    </div>
+    <button style="background:none; border:none; color:inherit; font-size:18px; cursor:pointer; padding:0 4px; opacity:0.7;" onclick="this.closest('.app-toast').remove()">&times;</button>
+  `;
+
+  container.appendChild(toast);
+  requestAnimationFrame(() => {
+    toast.classList.add('show');
+  });
+
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 350);
+  }, duration);
+}
+
 function saveCredentialsToStorage() {
   try {
     const prevSpapi = JSON.parse(localStorage.getItem(STORAGE_KEYS.SPAPI) || '{}');
@@ -34,7 +65,6 @@ function saveCredentialsToStorage() {
     const awsRegion = document.getElementById('cfgAwsRegion')?.value?.trim();
     const marketplaceId = document.getElementById('cfgMarketplace')?.value?.trim();
     const isSandbox = document.getElementById('cfgSandboxMode') ? document.getElementById('cfgSandboxMode').checked : false;
-    const assetsDir = document.getElementById('cfgAssetsDir')?.value?.trim();
 
     const spapiData = {
       clientId: (clientId !== undefined && clientId !== '') ? clientId : (prevSpapi.clientId || ''),
@@ -43,8 +73,7 @@ function saveCredentialsToStorage() {
       sellerId: (sellerId !== undefined && sellerId !== '') ? sellerId : (prevSpapi.sellerId || ''),
       awsRegion: awsRegion || prevSpapi.awsRegion || 'eu-west-1',
       marketplaceId: marketplaceId || prevSpapi.marketplaceId || 'A21TJRUUN4KGV',
-      isSandbox,
-      assetsDir: assetsDir || prevSpapi.assetsDir || '/home/dave/Desktop'
+      isSandbox
     };
     localStorage.setItem(STORAGE_KEYS.SPAPI, JSON.stringify(spapiData));
 
@@ -96,7 +125,6 @@ function restoreCredentialsFromStorage() {
       if (sp.sellerId && document.getElementById('cfgSellerId')) document.getElementById('cfgSellerId').value = sp.sellerId;
       if (sp.awsRegion && document.getElementById('cfgAwsRegion')) document.getElementById('cfgAwsRegion').value = sp.awsRegion;
       if (sp.marketplaceId && document.getElementById('cfgMarketplace')) document.getElementById('cfgMarketplace').value = sp.marketplaceId;
-      if (sp.assetsDir && document.getElementById('cfgAssetsDir')) document.getElementById('cfgAssetsDir').value = sp.assetsDir;
       if (sp.isSandbox !== undefined && document.getElementById('cfgSandboxMode')) {
         document.getElementById('cfgSandboxMode').checked = sp.isSandbox;
         const badge = document.getElementById('sandboxBadge');
@@ -138,7 +166,6 @@ function getActiveSpapiCredentials() {
   const awsRegion = document.getElementById('cfgAwsRegion')?.value?.trim() || stored.awsRegion || 'eu-west-1';
   const marketplaceId = document.getElementById('cfgMarketplace')?.value?.trim() || stored.marketplaceId || 'A21TJRUUN4KGV';
   const isSandbox = document.getElementById('cfgSandboxMode') ? document.getElementById('cfgSandboxMode').checked : (stored.isSandbox !== undefined ? stored.isSandbox : false);
-  const assetsDir = document.getElementById('cfgAssetsDir')?.value?.trim() || stored.assetsDir || '';
 
   return {
     clientId,
@@ -147,8 +174,7 @@ function getActiveSpapiCredentials() {
     sellerId,
     awsRegion,
     marketplaceId,
-    isSandbox,
-    assetsDir
+    isSandbox
   };
 }
 
@@ -179,7 +205,6 @@ document.addEventListener('DOMContentLoaded', () => {
   initTableEvents();
   initSlideManager();
   initBulkQueue();
-  initPreviewer();
   initSettings();
   initModals();
 });
@@ -196,9 +221,24 @@ function initNavigation() {
     });
   });
 
-  document.getElementById('refreshDataBtn').addEventListener('click', () => {
-    fetchListings();
-  });
+  const refreshBtn = document.getElementById('refreshDataBtn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      const icon = refreshBtn.querySelector('.icon');
+      if (icon) icon.classList.add('spinning');
+      refreshBtn.disabled = true;
+
+      try {
+        await fetchListings(true); // force server reload
+        showToast('✓ Listings and live audit matrix refreshed successfully!', 'success');
+      } catch (err) {
+        showToast('Failed to refresh listings: ' + err.message, 'error');
+      } finally {
+        if (icon) icon.classList.remove('spinning');
+        refreshBtn.disabled = false;
+      }
+    });
+  }
 
   document.getElementById('openBulkUploadBtn').addEventListener('click', () => {
     openModal('bulkUploadModal');
@@ -224,42 +264,55 @@ function switchTab(tabId) {
 // ==========================================================================
 // 2. Fetch Listings & Render Audit Grid (650+ items)
 // ==========================================================================
-async function fetchListings() {
-  // If we already have the full catalog loaded in client state (e.g. 774 items), use client pagination
-  if (state.allListings && state.allListings.length > state.limit) {
+async function fetchListings(forceServer = false) {
+  // If we already have listings loaded in state and not forcing reload, just re-paginate
+  if (!forceServer && state.allListings && state.allListings.length > 0) {
     paginateAndRenderClientListings();
     return;
   }
 
   try {
-    const params = new URLSearchParams({
-      page: state.currentPage,
-      limit: state.limit,
-      status: state.currentFilter,
-      search: state.searchQuery
-    });
-
-    const res = await fetch(`/api/listings?${params.toString()}`);
+    const res = await fetch('/api/listings?all=true');
     const data = await res.json();
 
     if (data && data.items && data.items.length > 0) {
-      if (!state.allListings || state.allListings.length <= data.items.length) {
-        state.allListings = data.items;
-      }
-      state.loadedItems = data.items;
-      try { localStorage.setItem('aplus_cached_listings', JSON.stringify(state.allListings)); } catch(e){}
-      updateKpis(data.metrics);
-      renderTable(data.items);
-      renderPagination(data.totalCount, data.page, data.totalPages);
-      updatePreviewAsinDropdown(data.items);
+      // Merge with any client-stored live statuses
+      let localCached = [];
+      try {
+        const stored = localStorage.getItem('aplus_cached_listings');
+        if (stored) localCached = JSON.parse(stored);
+      } catch (_) {}
+
+      const localMap = new Map();
+      localCached.forEach(c => {
+        if (c && c.asin) localMap.set(c.asin.toUpperCase(), c);
+      });
+
+      state.allListings = data.items.map(srvItem => {
+        const cleanAsin = (srvItem.asin || '').toUpperCase();
+        const loc = localMap.get(cleanAsin);
+        if (loc) {
+          return {
+            ...srvItem,
+            status: (loc.status && loc.status !== 'DRAFT') ? loc.status : (srvItem.status || 'DRAFT'),
+            liveOnAmazon: Boolean(srvItem.liveOnAmazon || loc.liveOnAmazon),
+            auditTimestamp: srvItem.auditTimestamp || loc.auditTimestamp,
+            contentReferenceKey: srvItem.contentReferenceKey || loc.contentReferenceKey
+          };
+        }
+        return srvItem;
+      });
+
+      try { localStorage.setItem('aplus_cached_listings', JSON.stringify(state.allListings)); } catch (e) {}
+      paginateAndRenderClientListings();
     } else {
-      // Fallback to client-side cached listings (vital for Vercel serverless containers)
+      // Fallback to client-side cached listings (vital for offline / serverless restarts)
       let cached = state.allListings;
       if (!cached || cached.length === 0) {
         try {
           const stored = localStorage.getItem('aplus_cached_listings');
           if (stored) cached = JSON.parse(stored);
-        } catch(e){}
+        } catch (e) {}
       }
 
       if (cached && cached.length > 0) {
@@ -269,7 +322,6 @@ async function fetchListings() {
         updateKpis(data.metrics || { total: 0, approved: 0, submitted: 0, rejected: 0, draft: 0, liveOnAmazon: 0 });
         renderTable([]);
         renderPagination(0, 1, 1);
-        updatePreviewAsinDropdown([]);
       }
     }
   } catch (err) {
@@ -285,7 +337,13 @@ function paginateAndRenderClientListings() {
 
   // Filter by status
   if (state.currentFilter && state.currentFilter !== 'ALL') {
-    list = list.filter(item => item.status === state.currentFilter);
+    if (state.currentFilter === 'APPROVED') {
+      list = list.filter(item => item.status === 'APPROVED' || item.liveOnAmazon);
+    } else if (state.currentFilter === 'DRAFT') {
+      list = list.filter(item => (item.status === 'DRAFT' || !item.status) && !item.liveOnAmazon);
+    } else {
+      list = list.filter(item => item.status === state.currentFilter);
+    }
   }
 
   // Filter by search
@@ -298,15 +356,20 @@ function paginateAndRenderClientListings() {
     );
   }
 
-  // Compute metrics
+  // Compute metrics across ALL items
   const all = state.allListings || [];
+  const approvedCount = all.filter(l => l.status === 'APPROVED' || l.liveOnAmazon).length;
+  const submittedCount = all.filter(l => l.status === 'SUBMITTED').length;
+  const rejectedCount = all.filter(l => l.status === 'REJECTED').length;
+  const draftCount = all.filter(l => (l.status === 'DRAFT' || !l.status) && !l.liveOnAmazon).length;
+
   const metrics = {
     total: all.length,
-    approved: all.filter(l => l.status === 'APPROVED').length,
-    submitted: all.filter(l => l.status === 'SUBMITTED').length,
-    rejected: all.filter(l => l.status === 'REJECTED').length,
-    draft: all.filter(l => l.status === 'DRAFT').length,
-    liveOnAmazon: all.filter(l => l.liveOnAmazon).length
+    approved: approvedCount,
+    submitted: submittedCount,
+    rejected: rejectedCount,
+    draft: draftCount,
+    liveOnAmazon: approvedCount
   };
   updateKpis(metrics);
 
@@ -318,7 +381,6 @@ function paginateAndRenderClientListings() {
   state.loadedItems = pagedItems;
   renderTable(pagedItems);
   renderPagination(totalCount, state.currentPage, totalPages);
-  updatePreviewAsinDropdown(list);
 }
 
 function updateKpis(metrics) {
@@ -341,30 +403,55 @@ function renderTable(items) {
   tbody.innerHTML = '';
 
   if (!items || items.length === 0) {
-    tbody.innerHTML = `
-      <tr>
-        <td colspan="9" style="text-align:center; padding:50px 20px; color:#94a3b8;">
-          <div style="font-size:38px; margin-bottom:12px;">🗄️</div>
-          <strong style="color:#ffffff; font-size:16px; display:block; margin-bottom:6px;">No Real Listings Loaded Yet</strong>
-          <p style="font-size:13px; max-width:540px; margin:0 auto 18px; color:#94a3b8;">
-            Connect your OMS database or upload your catalog file with just <strong>SKU & ASIN</strong> to begin managing your 7-slide A+ stacks.
-          </p>
-          <div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
-            <button id="emptyStateUploadBtn" class="btn btn-primary btn-sm">
-              <span class="icon">📄</span> Upload SKU & ASIN File (CSV / TXT)
-            </button>
-            <button id="emptyStateDbBtn" class="btn btn-secondary btn-sm">
-              <span class="icon">⚙️</span> Configure OMS Database in Settings
-            </button>
-          </div>
-        </td>
-      </tr>
-    `;
-    const btnDb = document.getElementById('emptyStateDbBtn');
-    if (btnDb) btnDb.addEventListener('click', () => switchTab('settings-tab'));
+    const totalCatalogCount = (state.allListings ? state.allListings.length : 0);
+    if (totalCatalogCount === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="9" style="text-align:center; padding:50px 20px; color:#94a3b8;">
+            <div style="font-size:38px; margin-bottom:12px;">🗄️</div>
+            <strong style="color:#ffffff; font-size:16px; display:block; margin-bottom:6px;">No Real Listings Loaded Yet</strong>
+            <p style="font-size:13px; max-width:540px; margin:0 auto 18px; color:#94a3b8;">
+              Connect your OMS database in Settings or import a catalog file to begin managing your A+ stacks.
+            </p>
+            <div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
+              <button id="emptyStateDbBtn" class="btn btn-secondary btn-sm">
+                <span class="icon">⚙️</span> Configure OMS Database in Settings
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+      const btnDb = document.getElementById('emptyStateDbBtn');
+      if (btnDb) btnDb.addEventListener('click', () => switchTab('settings-tab'));
+    } else {
+      let filterName = 'matching this filter';
+      if (state.currentFilter === 'APPROVED') filterName = 'in Live / Approved';
+      else if (state.currentFilter === 'SUBMITTED') filterName = 'currently In Review (Submitted)';
+      else if (state.currentFilter === 'REJECTED') filterName = 'with Moderation Errors (Rejected)';
+      else if (state.currentFilter === 'DRAFT') filterName = 'in Draft';
 
-    const btnUpload = document.getElementById('emptyStateUploadBtn');
-    if (btnUpload) btnUpload.addEventListener('click', () => openModal('skuAsinUploadModal'));
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="9" style="text-align:center; padding:45px 20px; color:#94a3b8;">
+            <div style="font-size:32px; margin-bottom:10px;">📋</div>
+            <strong style="color:#ffffff; font-size:15px; display:block; margin-bottom:6px;">No Listings ${filterName}</strong>
+            <p style="font-size:13px; max-width:480px; margin:0 auto 16px; color:#94a3b8;">
+              There are currently 0 listings ${filterName}. You can audit listings or push drafts to publish them to amazon.in.
+            </p>
+            <button class="btn btn-outline btn-sm reset-filter-btn" style="color:#38bdf8; border-color:#0284c7;">
+              Show All Listings (${totalCatalogCount})
+            </button>
+          </td>
+        </tr>
+      `;
+      tbody.querySelector('.reset-filter-btn')?.addEventListener('click', () => {
+        document.querySelectorAll('.pill-btn').forEach(b => b.classList.remove('active'));
+        document.querySelector('.pill-btn[data-filter="ALL"]')?.classList.add('active');
+        state.currentFilter = 'ALL';
+        state.currentPage = 1;
+        paginateAndRenderClientListings();
+      });
+    }
     return;
   }
 
@@ -380,7 +467,7 @@ function renderTable(items) {
     } else if (item.status === 'REJECTED') {
       statusClass = 'pill-danger';
       statusLabel = 'REJECTED';
-    } else if (item.status === 'DRAFT') {
+    } else if (item.status === 'DRAFT' && !item.liveOnAmazon) {
       statusClass = 'pill-draft';
       statusLabel = 'DRAFT';
     }
@@ -447,21 +534,59 @@ function renderTable(items) {
   document.querySelectorAll('.audit-asin-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const asin = btn.getAttribute('data-asin');
-      btn.textContent = 'Auditing...';
+      const origHtml = btn.innerHTML;
+      btn.innerHTML = 'Auditing...';
       btn.disabled = true;
+
       try {
+        const activeCreds = getActiveSpapiCredentials();
         const res = await fetch('/api/audit-asin', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ asin })
+          body: JSON.stringify({ 
+            asin,
+            credentials: (activeCreds && activeCreds.clientId) ? activeCreds : undefined
+          })
         });
         const result = await res.json();
-        alert(`Audit Result for ${asin}:\nMarketplace: ${result.marketplace}\nLive on Detail Page: ${result.isLive ? 'YES (Active)' : 'NO'}\nAmazon Link: ${result.amazonUrl}`);
-        fetchListings();
+
+        if (!res.ok || !result.success) {
+          throw new Error(result.error || result.message || 'Audit request failed');
+        }
+
+        const isLive = Boolean(result.isLive);
+        const updateListingItem = (it) => {
+          if (!it) return;
+          it.liveOnAmazon = isLive;
+          if (isLive) {
+            it.status = 'APPROVED';
+            it.moderationErrors = [];
+          }
+          it.auditTimestamp = new Date().toISOString();
+        };
+
+        if (state.allListings) {
+          updateListingItem(state.allListings.find(i => (i.asin || '').toUpperCase() === asin.toUpperCase()));
+        }
+        if (state.loadedItems) {
+          updateListingItem(state.loadedItems.find(i => (i.asin || '').toUpperCase() === asin.toUpperCase()));
+        }
+
+        try {
+          localStorage.setItem('aplus_cached_listings', JSON.stringify(state.allListings));
+        } catch (_) {}
+
+        paginateAndRenderClientListings();
+
+        if (isLive) {
+          showToast(`✅ <strong>${asin}</strong> is <strong>LIVE (Active)</strong> on Amazon PDP! <a href="${result.amazonUrl}" target="_blank" style="margin-left:6px;">View on Amazon ↗</a>`, 'success');
+        } else {
+          showToast(`ℹ️ <strong>${asin}</strong>: Not yet active on Amazon PDP (Status: ${result.status || 'DRAFT'}). <a href="${result.amazonUrl}" target="_blank" style="margin-left:6px;">PDP Link ↗</a>`, 'info');
+        }
       } catch (err) {
-        alert('Audit failed: ' + err.message);
+        showToast(`❌ Audit failed for ${asin}: ${err.message}`, 'error');
       } finally {
-        btn.textContent = 'Audit';
+        btn.innerHTML = origHtml;
         btn.disabled = false;
       }
     });
@@ -480,8 +605,12 @@ function renderTable(items) {
 
 function updateSelectedCounter() {
   const count = state.selectedAsins.size;
-  document.getElementById('selectedCount').textContent = count;
-  document.getElementById('batchSelectedBtn').disabled = count === 0;
+  const countEl = document.getElementById('selectedCount');
+  if (countEl) countEl.textContent = count;
+  const batchBtn = document.getElementById('batchSelectedBtn');
+  if (batchBtn) batchBtn.disabled = count === 0;
+  const auditBtn = document.getElementById('auditSelectedBtn');
+  if (auditBtn) auditBtn.disabled = count === 0;
 }
 
 function renderPagination(total, page, totalPages) {
@@ -507,7 +636,7 @@ function initTableEvents() {
     searchTimeout = setTimeout(() => {
       state.searchQuery = e.target.value.trim();
       state.currentPage = 1;
-      fetchListings();
+      paginateAndRenderClientListings();
     }, 300);
   });
 
@@ -518,7 +647,7 @@ function initTableEvents() {
       btn.classList.add('active');
       state.currentFilter = btn.getAttribute('data-filter');
       state.currentPage = 1;
-      fetchListings();
+      paginateAndRenderClientListings();
     });
   });
 
@@ -538,22 +667,14 @@ function initTableEvents() {
   document.getElementById('prevPageBtn').addEventListener('click', () => {
     if (state.currentPage > 1) {
       state.currentPage--;
-      if (state.allListings && state.allListings.length > state.limit) {
-        paginateAndRenderClientListings();
-      } else {
-        fetchListings();
-      }
+      paginateAndRenderClientListings();
     }
   });
 
   document.getElementById('nextPageBtn').addEventListener('click', () => {
     if (state.currentPage < state.totalPages) {
       state.currentPage++;
-      if (state.allListings && state.allListings.length > state.limit) {
-        paginateAndRenderClientListings();
-      } else {
-        fetchListings();
-      }
+      paginateAndRenderClientListings();
     }
   });
 
@@ -570,6 +691,66 @@ function initTableEvents() {
     }
   });
 
+  // Audit selected
+  const auditSelectedBtn = document.getElementById('auditSelectedBtn');
+  if (auditSelectedBtn) {
+    auditSelectedBtn.addEventListener('click', async () => {
+      const asins = Array.from(state.selectedAsins);
+      if (asins.length === 0) return;
+
+      const origHtml = auditSelectedBtn.innerHTML;
+      auditSelectedBtn.disabled = true;
+      let auditedCount = 0;
+      let liveCount = 0;
+
+      showToast(`Starting live status audit for ${asins.length} selected ASINs...`, 'info', 3000);
+
+      const activeCreds = getActiveSpapiCredentials();
+      for (let i = 0; i < asins.length; i++) {
+        const asin = asins[i];
+        auditSelectedBtn.innerHTML = `Auditing (${i + 1}/${asins.length})...`;
+
+        try {
+          const res = await fetch('/api/audit-asin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              asin,
+              credentials: (activeCreds && activeCreds.clientId) ? activeCreds : undefined
+            })
+          });
+          const result = await res.json();
+          if (result && result.success) {
+            auditedCount++;
+            if (result.isLive) liveCount++;
+
+            const updateListingItem = (it) => {
+              if (!it) return;
+              it.liveOnAmazon = Boolean(result.isLive);
+              if (result.isLive) {
+                it.status = 'APPROVED';
+                it.moderationErrors = [];
+              }
+              it.auditTimestamp = new Date().toISOString();
+            };
+
+            if (state.allListings) updateListingItem(state.allListings.find(it => (it.asin || '').toUpperCase() === asin.toUpperCase()));
+            if (state.loadedItems) updateListingItem(state.loadedItems.find(it => (it.asin || '').toUpperCase() === asin.toUpperCase()));
+          }
+        } catch (_) {}
+      }
+
+      try {
+        localStorage.setItem('aplus_cached_listings', JSON.stringify(state.allListings));
+      } catch (_) {}
+
+      paginateAndRenderClientListings();
+      auditSelectedBtn.innerHTML = origHtml;
+      auditSelectedBtn.disabled = false;
+      showToast(`Audit complete: ${auditedCount} checked, ${liveCount} verified Live on Amazon PDP!`, 'success', 5000);
+    });
+  }
+
   // Upload SKU & ASIN modal button
   const uploadSkuAsinBtn = document.getElementById('openSkuAsinUploadBtn');
   if (uploadSkuAsinBtn) {
@@ -579,9 +760,12 @@ function initTableEvents() {
   }
 
   // Download sample CSV (2 columns: SKU, ASIN)
-  document.getElementById('downloadCsvBtn').addEventListener('click', () => {
-    window.location.href = '/api/download-sku-asin-template';
-  });
+  const downloadCsvBtn = document.getElementById('downloadCsvBtn');
+  if (downloadCsvBtn) {
+    downloadCsvBtn.addEventListener('click', () => {
+      window.location.href = '/api/download-sku-asin-template';
+    });
+  }
 
   // Clear loaded listings button
   const clearBtn = document.getElementById('clearListingsBtn');
@@ -596,7 +780,6 @@ function initTableEvents() {
         renderTable([]);
         renderPagination(0, 1, 1);
         updateKpis({ total: 0, approved: 0, submitted: 0, rejected: 0, draft: 0, liveOnAmazon: 0 });
-        updatePreviewAsinDropdown([]);
         updateSelectedCounter();
       }
     });
@@ -853,6 +1036,28 @@ function initBulkQueue() {
       <div class="term-line info">[System] Log cleared. Ready for next batch...</div>
     `;
   });
+
+  // Keep headline checkboxes and premium module types synchronized between tabs
+  const slideHeadline = document.getElementById('includeBannerHeadline');
+  const queueHeadline = document.getElementById('queueIncludeBannerHeadline');
+  if (slideHeadline && queueHeadline) {
+    slideHeadline.addEventListener('change', (e) => { queueHeadline.checked = e.target.checked; });
+    queueHeadline.addEventListener('change', (e) => { slideHeadline.checked = e.target.checked; });
+  }
+
+  const slidePremType = document.getElementById('premiumModuleTypeSelect');
+  const queuePremType = document.getElementById('queuePremiumTypeSelect');
+  if (slidePremType && queuePremType) {
+    slidePremType.addEventListener('change', (e) => { queuePremType.value = e.target.value; });
+    queuePremType.addEventListener('change', (e) => { slidePremType.value = e.target.value; });
+  }
+
+  const slideTier = document.getElementById('aplusContentTier');
+  const queueTier = document.getElementById('queueAplusTier');
+  if (slideTier && queueTier) {
+    slideTier.addEventListener('change', (e) => { queueTier.value = e.target.value; });
+    queueTier.addEventListener('change', (e) => { slideTier.value = e.target.value; });
+  }
 }
 
 async function startBatch(asins = null, customItems = null, includeClientSlides = false) {
@@ -897,8 +1102,14 @@ async function startBatch(asins = null, customItems = null, includeClientSlides 
   }
 
   const activeCreds = getActiveSpapiCredentials();
-  const tier = document.getElementById('queueAplusTier')?.value || document.getElementById('aplusContentTier')?.value || 'PREMIUM';
-  const premiumType = document.getElementById('premiumModuleTypeSelect')?.value || 'PREMIUM_IMAGE_TEXT';
+  const tier = (state.activeTab === 'queue-tab' ? document.getElementById('queueAplusTier')?.value : document.getElementById('aplusContentTier')?.value) || 'PREMIUM';
+  const premiumType = (state.activeTab === 'queue-tab' ? document.getElementById('queuePremiumTypeSelect')?.value : document.getElementById('premiumModuleTypeSelect')?.value) || 'PREMIUM_FULL_BACKGROUND_IMAGE';
+  const includeHeadline = state.activeTab === 'queue-tab'
+    ? Boolean(document.getElementById('queueIncludeBannerHeadline')?.checked)
+    : Boolean(document.getElementById('includeBannerHeadline')?.checked);
+
+  // Track target ASINs so we can mark them Approved & Live when batch completes
+  state.lastBatchAsins = (asins && asins.length > 0) ? asins : (itemsToSend ? itemsToSend.map(i => i.asin) : null);
 
   const payloadObj = { 
     asins, 
@@ -906,7 +1117,8 @@ async function startBatch(asins = null, customItems = null, includeClientSlides 
     credentials: (activeCreds && activeCreds.clientId) ? activeCreds : undefined,
     clientSlides,
     tier,
-    premiumType
+    premiumType,
+    includeHeadline
   };
 
   const payloadStr = JSON.stringify(payloadObj);
@@ -994,7 +1206,24 @@ async function pollBatchStatus() {
       clearInterval(state.batchPollInterval);
       document.getElementById('startBulkAllBtn').disabled = false;
       appendLog(`[Job Completed] Successfully processed ${job.successful} listings on amazon.in!`, 'success');
-      fetchListings(); // Refresh main table
+      
+      // Update local state for pushed items so they are immediately reflected as Live / Approved
+      if (state.lastBatchAsins && state.allListings) {
+        const asinSet = new Set(state.lastBatchAsins.map(a => String(a).toUpperCase()));
+        state.allListings.forEach(it => {
+          if (it && it.asin && asinSet.has(it.asin.toUpperCase())) {
+            it.status = 'APPROVED';
+            it.liveOnAmazon = true;
+            it.moderationErrors = [];
+            it.auditTimestamp = new Date().toISOString();
+          }
+        });
+        try {
+          localStorage.setItem('aplus_cached_listings', JSON.stringify(state.allListings));
+        } catch (_) {}
+      }
+      state.lastBatchAsins = null;
+      fetchListings(true); // Force refresh
     }
   } catch (err) {
     console.error('Error polling batch:', err);
@@ -1011,112 +1240,7 @@ function appendLog(msg, type = 'info') {
 }
 
 // ==========================================================================
-// 5. Visual A+ Product Previewer
-// ==========================================================================
-function initPreviewer() {
-  const deviceBtns = document.querySelectorAll('.device-btn');
-  const frame = document.getElementById('mockupFrame');
-
-  deviceBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      deviceBtns.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-
-      const dev = btn.getAttribute('data-device');
-      if (dev === 'mobile') {
-        frame.classList.remove('desktop-frame');
-        frame.classList.add('mobile-frame');
-      } else {
-        frame.classList.remove('mobile-frame');
-        frame.classList.add('desktop-frame');
-      }
-    });
-  });
-
-  const select = document.getElementById('previewAsinSelect');
-  if (select) {
-    select.addEventListener('change', (e) => {
-      const item = (state.loadedItems || []).find(i => i.asin === e.target.value);
-      if (item) renderPreviewForItem(item);
-    });
-  }
-}
-
-function updatePreviewAsinDropdown(items) {
-  const select = document.getElementById('previewAsinSelect');
-  if (!select) return;
-  if (!items || items.length === 0) {
-    select.innerHTML = '<option value="">-- No listings loaded yet --</option>';
-    return;
-  }
-
-  const currentVal = select.value;
-  select.innerHTML = '';
-  items.slice(0, 100).forEach((item, idx) => {
-    const opt = document.createElement('option');
-    opt.value = item.asin;
-    opt.textContent = `${item.asin} - ${item.title || item.sku}`;
-    if (item.asin === currentVal || (idx === 0 && !currentVal)) opt.selected = true;
-    select.appendChild(opt);
-  });
-
-  const selectedItem = items.find(i => i.asin === select.value) || items[0];
-  if (selectedItem) renderPreviewForItem(selectedItem);
-}
-
-async function renderPreviewForItem(item) {
-  if (!item) return;
-  const titleEl = document.getElementById('mockupTitle');
-  if (titleEl) titleEl.textContent = item.title || item.sku;
-
-  const stack = document.getElementById('aplusLiveStack');
-  if (!stack) return;
-
-  stack.innerHTML = `<div style="text-align: center; padding: 30px; color: #94a3b8; font-size: 12px;">Loading A+ Content banners for ${item.asin}...</div>`;
-
-  try {
-    const res = await fetch(`/api/asin-slides/${encodeURIComponent(item.asin)}`);
-    const data = await res.json();
-
-    if (data && data.slides && data.slides.length > 0) {
-      stack.innerHTML = `
-        <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 11px; color: #10b981; display: flex; justify-content: space-between; align-items: center;">
-          <span>✓ Found ${data.slides.length} A+ Graphic Banners in <code>${data.folder || '/home/dave/Desktop/' + item.asin}</code></span>
-          <span style="font-weight: 600;">970 × 600 px Stack</span>
-        </div>
-        ${data.slides.map((s, idx) => `
-          <div style="margin-bottom: 8px; border-radius: 4px; overflow: hidden; background: #000; text-align: center; border: 1px solid rgba(255, 255, 255, 0.08); box-shadow: 0 4px 12px rgba(0,0,0,0.5);">
-            <img src="${s.url}" alt="A+ Slide ${idx + 1}" style="width: 100%; height: auto; display: block;" loading="lazy">
-            <div style="font-size: 10.5px; color: #94a3b8; padding: 5px 10px; background: #0f172a; display: flex; justify-content: space-between;">
-              <span style="font-weight: 600; color: #f1f5f9;">Module ${idx + 1}: ${s.fileName}</span>
-              <span style="color: #64748b;">${(s.size / 1024).toFixed(0)} KB</span>
-            </div>
-          </div>
-        `).join('')}
-      `;
-    } else {
-      // Per user instruction: do not show product packshots if A+ slides are not found
-      stack.innerHTML = `
-        <div style="padding: 45px 20px; text-align: center; color: #94a3b8; background: rgba(15, 23, 42, 0.6); border-radius: 8px; border: 1px dashed rgba(255, 255, 255, 0.12); margin-top: 10px;">
-          <div style="font-size: 34px; margin-bottom: 10px;">🎨</div>
-          <strong style="color: #ffffff; font-size: 15px; display: block; margin-bottom: 8px;">No A+ Banners Found for ${item.asin}</strong>
-          <p style="font-size: 12px; max-width: 440px; margin: 0 auto 16px; color: #94a3b8; line-height: 1.5;">
-            Product gallery packshots are excluded to avoid confusion. Place your 7 A+ banner graphics (<code>A+1.jpg</code> to <code>A+7.jpg</code>) in:
-          </p>
-          <div style="background: rgba(0,0,0,0.4); padding: 8px 12px; border-radius: 6px; font-family: monospace; font-size: 12px; color: #38bdf8; display: inline-block; margin-bottom: 14px;">
-            /home/dave/Desktop/${item.asin}/
-          </div>
-          <p style="font-size: 11px; color: #64748b;">Or upload slide banners using the 7-Slide Manager tab.</p>
-        </div>
-      `;
-    }
-  } catch (err) {
-    stack.innerHTML = `<div style="text-align: center; padding: 30px; color: #ef4444; font-size: 12px;">Failed to load A+ preview: ${err.message}</div>`;
-  }
-}
-
-// ==========================================================================
-// 6. SP-API & OMS Database Settings & Interactive Table Selector
+// 5. SP-API & OMS Database Settings & Interactive Table Selector
 // ==========================================================================
 async function fetchConfig() {
   try {
@@ -1132,10 +1256,6 @@ async function fetchConfig() {
     const regionEl = document.getElementById('cfgAwsRegion');
     if (regionEl && !regionEl.value && data.awsRegion) {
       regionEl.value = data.awsRegion;
-    }
-    const assetsEl = document.getElementById('cfgAssetsDir');
-    if (assetsEl && !assetsEl.value && data.assetsDir) {
-      assetsEl.value = data.assetsDir;
     }
     if (!hasStoredSpapi) {
       document.getElementById('cfgSandboxMode').checked = data.isSandbox;
@@ -1452,7 +1572,7 @@ function initSettings() {
   });
 
   // Auto-save credentials as user types to prevent any data loss on refresh
-  ['cfgClientId', 'cfgClientSecret', 'cfgRefreshToken', 'cfgSellerId', 'cfgAwsRegion', 'cfgMarketplace', 'cfgAssetsDir'].forEach(id => {
+  ['cfgClientId', 'cfgClientSecret', 'cfgRefreshToken', 'cfgSellerId', 'cfgAwsRegion', 'cfgMarketplace'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', saveCredentialsToStorage);
   });

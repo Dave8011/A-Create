@@ -996,12 +996,13 @@ class SpApiClient {
     if (tier === 'PREMIUM') {
       contentModuleList = cappedSlides.map((slide, index) => {
         const slideNum = index + 1;
+        const shouldIncludeHeadline = Boolean(options.includeHeadline);
         const headlineText = (slide.title || `Slide ${slideNum} - ${name || asin}`).trim().slice(0, 80);
         const subheadlineText = (slide.subheadline || `Feature ${slideNum}`).trim().slice(0, 40);
         const altText = (slide.altText || `${name || asin} slide ${slideNum}`).trim();
 
         if (premiumType === 'PREMIUM_FULL_BACKGROUND_IMAGE') {
-          return {
+          const modPayload = {
             contentModuleType: 'PREMIUM_FULL_BACKGROUND_IMAGE',
             premiumFullBackgroundImage: {
               desktopImage: {
@@ -1019,13 +1020,18 @@ class SpApiClient {
                 },
                 uploadDestinationId: slide.uploadDestinationId,
                 altText
-              },
-              headline: {
-                decoratorSet: [],
-                value: headlineText
               }
             }
           };
+
+          if (shouldIncludeHeadline && headlineText) {
+            modPayload.premiumFullBackgroundImage.headline = {
+              decoratorSet: [],
+              value: headlineText
+            };
+          }
+
+          return modPayload;
         } else if (premiumType === 'PREMIUM_FULL_BACKGROUND_TEXT') {
           return {
             contentModuleType: 'PREMIUM_FULL_BACKGROUND_TEXT',
