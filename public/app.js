@@ -21,7 +21,8 @@ const state = {
 // LocalStorage Persistence Keys
 const STORAGE_KEYS = {
   SPAPI: 'aplus_spapi_credentials',
-  DB: 'aplus_db_credentials'
+  DB: 'aplus_db_credentials',
+  GRAPHICS_DIR: 'aplus_graphics_dir'
 };
 
 // Modern Floating Toast Notification
@@ -109,6 +110,10 @@ function saveCredentialsToStorage() {
       prodJoinKey: (prodJoinKey !== undefined && prodJoinKey !== '') ? prodJoinKey : (prevDb.prodJoinKey || '')
     };
     localStorage.setItem(STORAGE_KEYS.DB, JSON.stringify(dbData));
+
+    // A+ Graphics Root Directory
+    const gDir = document.getElementById('cfgGraphicsDir')?.value?.trim() || document.getElementById('slideManagerBaseDirInput')?.value?.trim();
+    if (gDir) localStorage.setItem(STORAGE_KEYS.GRAPHICS_DIR, gDir);
   } catch (err) {
     console.warn('Failed saving credentials to storage:', err);
   }
@@ -152,6 +157,10 @@ function restoreCredentialsFromStorage() {
       if (db.amzJoinKey && document.getElementById('cfgDbAmzJoinKey')) document.getElementById('cfgDbAmzJoinKey').value = db.amzJoinKey;
       if (db.prodJoinKey && document.getElementById('cfgDbProdJoinKey')) document.getElementById('cfgDbProdJoinKey').value = db.prodJoinKey;
     }
+
+    const savedGraphicsDir = localStorage.getItem(STORAGE_KEYS.GRAPHICS_DIR) || '/home/dave/A+ Premium';
+    if (document.getElementById('cfgGraphicsDir')) document.getElementById('cfgGraphicsDir').value = savedGraphicsDir;
+    if (document.getElementById('slideManagerBaseDirInput')) document.getElementById('slideManagerBaseDirInput').value = savedGraphicsDir;
   } catch (err) {
     console.warn('Failed restoring credentials from storage:', err);
   }
@@ -561,6 +570,8 @@ function renderTable(items) {
           if (isLive) {
             it.status = 'APPROVED';
             it.moderationErrors = [];
+          } else {
+            it.status = 'DRAFT';
           }
           it.auditTimestamp = new Date().toISOString();
         };
@@ -730,6 +741,8 @@ function initTableEvents() {
               if (result.isLive) {
                 it.status = 'APPROVED';
                 it.moderationErrors = [];
+              } else {
+                it.status = 'DRAFT';
               }
               it.auditTimestamp = new Date().toISOString();
             };
@@ -847,13 +860,16 @@ function initSlideManager() {
   if (loadLocalBtn) {
     loadLocalBtn.addEventListener('click', async () => {
       const asinInput = document.getElementById('slideManagerAsinInput');
+      const baseDirInput = document.getElementById('slideManagerBaseDirInput');
       const statusSpan = document.getElementById('loadLocalSlidesStatus');
       const asin = asinInput ? asinInput.value.trim().toUpperCase() : 'B09LYW9P2F';
+      const baseDir = baseDirInput ? baseDirInput.value.trim() : '';
       if (!asin) return;
 
       loadLocalBtn.textContent = 'Loading...';
       try {
-        const res = await fetch(`/api/asin-slides/${encodeURIComponent(asin)}`);
+        const query = baseDir ? `?baseDir=${encodeURIComponent(baseDir)}` : '';
+        const res = await fetch(`/api/asin-slides/${encodeURIComponent(asin)}${query}`);
         const data = await res.json();
         if (data && data.slides && data.slides.length > 0) {
           data.slides.forEach(s => {
@@ -862,21 +878,24 @@ function initSlideManager() {
               preview.innerHTML = `
                 <img src="${s.url}" style="max-height:80px; max-width:100%; border-radius:4px; margin-bottom:4px;" alt="Slide ${s.slideIndex}">
                 <p style="font-size:11px; color:#10b981; font-weight:600;">✓ ${s.fileName}</p>
-                <small style="color:#94a3b8;">${(s.size / 1024).toFixed(0)} KB (from Desktop/${asin})</small>
+                <small style="color:#94a3b8;">${(s.size / 1024).toFixed(0)} KB (from ${s.fileName})</small>
               `;
             }
           });
-          statusSpan.textContent = `✓ Loaded ${data.slides.length} slides from ${data.folder || '/home/dave/Desktop/' + asin}`;
+          statusSpan.textContent = `✓ Loaded ${data.slides.length} slides from ${data.folder || (baseDir + '/' + asin)}`;
           statusSpan.style.color = '#10b981';
+          showToast(`✓ Loaded ${data.slides.length} A+ banner slides for ${asin}!`, 'success');
         } else {
-          statusSpan.textContent = `❌ No A+ slide files found in /home/dave/Desktop/${asin}`;
+          statusSpan.textContent = `❌ No A+ slide files found in ${data.folder || (baseDir ? baseDir + '/' + asin : 'ASIN folder')}`;
           statusSpan.style.color = '#ef4444';
+          showToast(`No A+ slide files found for ${asin}. Checked: ${data.folder || (baseDir ? baseDir + '/' + asin : 'ASIN folder')}`, 'info');
         }
       } catch (err) {
         statusSpan.textContent = `❌ Error: ${err.message}`;
         statusSpan.style.color = '#ef4444';
+        showToast(`Failed loading slides: ${err.message}`, 'error');
       } finally {
-        loadLocalBtn.innerHTML = '<span class="icon">🔍</span> Load Slides from /Desktop';
+        loadLocalBtn.innerHTML = '<span class="icon">🔍</span> Sync & Load ASIN Slides';
       }
     });
   }
@@ -1111,6 +1130,11 @@ async function startBatch(asins = null, customItems = null, includeClientSlides 
   // Track target ASINs so we can mark them Approved & Live when batch completes
   state.lastBatchAsins = (asins && asins.length > 0) ? asins : (itemsToSend ? itemsToSend.map(i => i.asin) : null);
 
+  const baseDir = document.getElementById('slideManagerBaseDirInput')?.value?.trim() || 
+                  document.getElementById('cfgGraphicsDir')?.value?.trim() || 
+                  localStorage.getItem(STORAGE_KEYS.GRAPHICS_DIR) || 
+                  undefined;
+
   const payloadObj = { 
     asins, 
     items: (itemsToSend && itemsToSend.length > 0) ? itemsToSend : undefined,
@@ -1118,7 +1142,8 @@ async function startBatch(asins = null, customItems = null, includeClientSlides 
     clientSlides,
     tier,
     premiumType,
-    includeHeadline
+    includeHeadline,
+    baseDir
   };
 
   const payloadStr = JSON.stringify(payloadObj);
@@ -1283,6 +1308,11 @@ async function fetchConfig() {
       if (!document.getElementById('cfgRefreshToken').value) {
         document.getElementById('cfgRefreshToken').placeholder = '•••••••••••••••• (Refresh Token Configured)';
       }
+    }
+
+    if (data.graphicsDir && !localStorage.getItem(STORAGE_KEYS.GRAPHICS_DIR)) {
+      if (document.getElementById('cfgGraphicsDir')) document.getElementById('cfgGraphicsDir').value = data.graphicsDir;
+      if (document.getElementById('slideManagerBaseDirInput')) document.getElementById('slideManagerBaseDirInput').value = data.graphicsDir;
     }
   } catch (err) {
     console.error('Failed to load config:', err);
@@ -1708,6 +1738,102 @@ function initSettings() {
         renderDiagnosticReport(data);
       } catch (err) {
         showCallout(`❌ Diagnostic Error: ${err.message}`, 'error');
+      }
+    });
+  }
+
+  // Two-way synchronization between cfgGraphicsDir and slideManagerBaseDirInput
+  const cfgGraphicsDirEl = document.getElementById('cfgGraphicsDir');
+  const slideMgrBaseDirEl = document.getElementById('slideManagerBaseDirInput');
+
+  if (cfgGraphicsDirEl && slideMgrBaseDirEl) {
+    cfgGraphicsDirEl.addEventListener('input', (e) => {
+      slideMgrBaseDirEl.value = e.target.value;
+      localStorage.setItem(STORAGE_KEYS.GRAPHICS_DIR, e.target.value.trim());
+    });
+    slideMgrBaseDirEl.addEventListener('input', (e) => {
+      cfgGraphicsDirEl.value = e.target.value;
+      localStorage.setItem(STORAGE_KEYS.GRAPHICS_DIR, e.target.value.trim());
+    });
+  }
+
+  // Scan & Verify Graphics Directory Button
+  const scanGraphicsBtn = document.getElementById('scanGraphicsDirBtn');
+  if (scanGraphicsBtn) {
+    scanGraphicsBtn.addEventListener('click', async () => {
+      const dirPath = (cfgGraphicsDirEl?.value || slideMgrBaseDirEl?.value || '').trim();
+      const callout = document.getElementById('assetsDirScanCallout');
+      const badge = document.getElementById('assetsDirStatusBadge');
+
+      if (!dirPath) {
+        if (callout) {
+          callout.style.display = 'block';
+          callout.className = 'status-callout error';
+          callout.textContent = 'Please enter a valid directory path to scan.';
+        }
+        return;
+      }
+
+      const origHtml = scanGraphicsBtn.innerHTML;
+      scanGraphicsBtn.innerHTML = '<span class="icon">⏳</span> Scanning...';
+      scanGraphicsBtn.disabled = true;
+      if (callout) {
+        callout.style.display = 'block';
+        callout.className = 'status-callout';
+        callout.textContent = `Scanning directory '${dirPath}' for ASIN subfolders and slide files...`;
+      }
+
+      try {
+        const res = await fetch('/api/scan-assets-dir', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dirPath })
+        });
+        const data = await res.json();
+
+        if (data.success && data.exists) {
+          localStorage.setItem(STORAGE_KEYS.GRAPHICS_DIR, data.path);
+          if (cfgGraphicsDirEl) cfgGraphicsDirEl.value = data.path;
+          if (slideMgrBaseDirEl) slideMgrBaseDirEl.value = data.path;
+
+          if (badge) {
+            badge.textContent = `Active (${data.readyFolders || 0} ASINs Ready)`;
+            badge.className = 'pill-badge pill-approved';
+          }
+
+          if (callout) {
+            callout.style.display = 'block';
+            callout.className = 'status-callout success';
+            let summaryText = `✅ ${data.message}`;
+            if (data.sampleFolders && data.sampleFolders.length > 0) {
+              const readySamples = data.sampleFolders.filter(f => f.slideCount > 0).map(f => `<strong>${f.asinOrFolder}</strong> (${f.slideCount} slides)`).slice(0, 5);
+              if (readySamples.length > 0) {
+                summaryText += `<div style="margin-top:6px; font-size:12px;">Sample ready ASINs: ${readySamples.join(', ')}</div>`;
+              }
+            }
+            callout.innerHTML = summaryText;
+          }
+          showToast(`✓ Graphics folder verified: ${data.totalFolders} folders, ${data.readyFolders} ready`, 'success');
+        } else {
+          if (badge) {
+            badge.textContent = data.exists ? 'No Slides' : 'Folder Not Created';
+            badge.className = 'pill-badge pill-draft';
+          }
+          if (callout) {
+            callout.style.display = 'block';
+            callout.className = 'status-callout warning';
+            callout.innerHTML = `⚠️ ${data.message || 'Directory could not be verified.'}`;
+          }
+        }
+      } catch (err) {
+        if (callout) {
+          callout.style.display = 'block';
+          callout.className = 'status-callout error';
+          callout.textContent = `❌ Scan error: ${err.message}`;
+        }
+      } finally {
+        scanGraphicsBtn.innerHTML = origHtml;
+        scanGraphicsBtn.disabled = false;
       }
     });
   }

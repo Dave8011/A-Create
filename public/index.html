@@ -199,15 +199,21 @@
             </div>
 
             <!-- Quick Local ASIN Loader Toolbar -->
-            <div style="display:flex; gap:10px; align-items:center; margin-bottom:16px; background: rgba(255,255,255,0.03); padding:10px 14px; border-radius:8px; border: 1px solid rgba(255,255,255,0.08); flex-wrap:wrap;">
-              <span style="font-size:14px;">📁</span>
-              <span style="font-size:12px; color:var(--text-muted);">Local A+ Graphics Folder:</span>
-              <input type="text" id="slideManagerAsinInput" class="form-input" style="width:160px; padding:5px 8px; font-size:12px;" placeholder="e.g. B09LYW9P2F" value="B09LYW9P2F">
+            <div style="display:flex; gap:12px; align-items:center; margin-bottom:16px; background: rgba(255,255,255,0.03); padding:12px 16px; border-radius:8px; border: 1px solid rgba(255,255,255,0.08); flex-wrap:wrap;">
+              <span style="font-size:18px;">📁</span>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <label style="font-size:11.5px; color:var(--text-muted); font-weight:600; white-space:nowrap;">ROOT FOLDER:</label>
+                <input type="text" id="slideManagerBaseDirInput" class="form-input" style="width:200px; padding:5px 8px; font-size:12px; font-family:monospace;" placeholder="/home/dave/A+ Premium" value="/home/dave/A+ Premium">
+              </div>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <label style="font-size:11.5px; color:var(--text-muted); font-weight:600; white-space:nowrap;">TARGET ASIN:</label>
+                <input type="text" id="slideManagerAsinInput" class="form-input" style="width:130px; padding:5px 8px; font-size:12px; font-weight:600;" placeholder="e.g. B09LYW9P2F" value="B09LYW9P2F">
+              </div>
               <button id="loadLocalSlidesBtn" class="btn btn-secondary btn-sm" type="button">
-                <span class="icon">🔍</span> Load Slides from /Desktop
+                <span class="icon">🔍</span> Sync & Load ASIN Slides
               </button>
               <label class="btn btn-outline btn-sm" style="cursor:pointer; margin:0; display:inline-flex; align-items:center; gap:4px;">
-                <span class="icon">📂</span> Select ASIN Folder
+                <span class="icon">📂</span> Browse Folder
                 <input type="file" id="localFolderInput" webkitdirectory directory multiple style="display:none;">
               </label>
               <span id="loadLocalSlidesStatus" style="font-size:11.5px; color:#10b981; font-weight:500;"></span>
@@ -728,7 +734,35 @@
         <div id="connectionStatusBox" class="status-callout" style="display: none;"></div>
       </div>
 
-      <!-- 3. Manual Catalog Import & Template Tools -->
+      <!-- 3. Local A+ Graphics Root Directory Configuration -->
+      <div class="card settings-card" style="margin-top: 24px;">
+        <div class="card-header" style="margin-bottom: 12px;">
+          <div>
+            <h2 class="card-title">📁 Local A+ Graphics Root Directory</h2>
+            <p class="card-desc">Configure the root directory containing your ASIN graphics folders (e.g. <code>A+ Premium/{ASIN}/A+1.jpg</code>).</p>
+          </div>
+          <span id="assetsDirStatusBadge" class="pill-badge pill-draft">Auto-Detected</span>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label class="form-label">A+ Graphics Root Directory Path</label>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="cfgGraphicsDir" class="form-input" placeholder="/home/dave/A+ Premium" value="/home/dave/A+ Premium" style="font-family: monospace;">
+              <button type="button" id="scanGraphicsDirBtn" class="btn btn-secondary" style="white-space: nowrap;">
+                <span class="icon">🔍</span> Scan & Verify Folders
+              </button>
+            </div>
+            <small style="color: #94a3b8; font-size: 11.5px; margin-top: 5px; display: block;">
+              Inside this folder, each product has its own subfolder named by <strong>ASIN</strong> containing slides: <code>A+1.jpg</code> to <code>A+7.jpg</code>.
+            </small>
+          </div>
+        </div>
+
+        <div id="assetsDirScanCallout" class="status-callout" style="display: none; margin-top: 12px;"></div>
+      </div>
+
+      <!-- 4. Manual Catalog Import & Template Tools -->
       <div class="card settings-card" style="margin-top: 24px;">
         <h2 class="card-title">📄 Manual Catalog Import & CSV Templates</h2>
         <p class="card-desc">Import ASIN & SKU records manually via file upload, or download clean starter templates.</p>

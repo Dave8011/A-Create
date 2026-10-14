@@ -219,6 +219,8 @@ app.post('/api/clear-listings', (req, res) => {
 // 1. Config & Settings
 app.get('/api/config', (req, res) => {
   const summary = spapi.getConfigSummary();
+  const homeDir = process.env.HOME || '/home/dave';
+  summary.graphicsDir = process.env.APLUS_GRAPHICS_DIR || path.join(homeDir, 'A+ Premium');
   res.json(summary);
 });
 
@@ -702,34 +704,42 @@ app.post('/api/validate-slide-layout', (req, res) => {
 });
 
 // Helper: Discover local A+ banner files (A+1.jpg to A+7.jpg) for a given ASIN
+// Helper: Discover local A+ banner files (A+1.jpg to A+7.jpg) for a given ASIN
 function getAplusSlideFilesForAsin(asin, customBaseDir = null) {
   const cleanAsin = String(asin || '').trim();
   if (!cleanAsin) return [];
 
-  const homeDesktop = path.resolve(process.env.HOME || '/home/dave', 'Desktop');
-  const baseDir = path.resolve(String(customBaseDir || homeDesktop).trim());
+  const homeDir = process.env.HOME || '/home/dave';
+  const homeDesktop = path.resolve(homeDir, 'Desktop');
+  const configuredDir = customBaseDir || process.env.APLUS_GRAPHICS_DIR;
+
+  // Potential root base directories
+  const candidateRoots = [
+    configuredDir,
+    path.join(homeDir, 'A+ Premium'),
+    path.join(homeDesktop, 'A+ Premium'),
+    homeDesktop,
+    path.join(homeDir, 'Documents', 'A+ Premium'),
+    path.join(homeDir, 'Downloads', 'A+ Premium')
+  ].filter(Boolean).map(d => path.resolve(String(d).trim()));
 
   // Candidate directories MUST specifically point to THIS ASIN's subfolder
-  const asinCandidateDirs = [
-    // 1. Specific ASIN subfolder inside baseDir
-    path.join(baseDir, cleanAsin),
-    path.join(baseDir, cleanAsin.toUpperCase()),
-    path.join(baseDir, cleanAsin.toLowerCase()),
-    // 2. Specific ASIN subfolder on default Desktop
-    path.join('/home/dave/Desktop', cleanAsin),
-    path.join('/home/dave/Desktop', cleanAsin.toUpperCase()),
-    path.join('/home/dave/Desktop', cleanAsin.toLowerCase()),
-    path.join(homeDesktop, cleanAsin),
-    path.join(homeDesktop, cleanAsin.toUpperCase()),
-    path.join(homeDesktop, cleanAsin.toLowerCase()),
-    // 3. Specific ASIN folder in uploads
-    path.join(UPLOADS_DIR, cleanAsin)
-  ];
+  const asinCandidateDirs = [];
 
-  // If baseDir was explicitly configured directly as the ASIN folder itself (e.g. /home/dave/Desktop/B09LYW9P2F)
-  if (path.basename(baseDir).toUpperCase() === cleanAsin.toUpperCase()) {
-    asinCandidateDirs.unshift(baseDir);
+  for (const root of candidateRoots) {
+    // 1. Direct ASIN folder inside root (e.g. /home/dave/A+ Premium/B09LYW9P2F)
+    asinCandidateDirs.push(path.join(root, cleanAsin));
+    asinCandidateDirs.push(path.join(root, cleanAsin.toUpperCase()));
+    asinCandidateDirs.push(path.join(root, cleanAsin.toLowerCase()));
+
+    // 2. If root itself was explicitly chosen as the ASIN folder directly
+    if (path.basename(root).toUpperCase() === cleanAsin.toUpperCase()) {
+      asinCandidateDirs.push(root);
+    }
   }
+
+  // 3. Fallback to uploads directory
+  asinCandidateDirs.push(path.join(UPLOADS_DIR, cleanAsin));
 
   // Deduplicate and filter
   const candidateDirs = Array.from(new Set(asinCandidateDirs.filter(Boolean)));
@@ -815,18 +825,21 @@ function getAplusSlideFilesForAsin(asin, customBaseDir = null) {
 // Route: Get metadata and URLs of local A+ slides for an ASIN
 app.get('/api/asin-slides/:asin', (req, res) => {
   const { asin } = req.params;
-  const slides = getAplusSlideFilesForAsin(asin);
+  const { baseDir } = req.query;
+  const slides = getAplusSlideFilesForAsin(asin, baseDir);
+  const effectiveBase = baseDir || process.env.APLUS_GRAPHICS_DIR || path.join(process.env.HOME || '/home/dave', 'A+ Premium');
+
   res.json({
     asin,
     hasLocalSlides: slides.length > 0,
     slideCount: slides.length,
-    baseDir: path.join(process.env.HOME || '/home/dave', 'Desktop'),
+    baseDir: effectiveBase,
     folder: slides[0] ? slides[0].dir : null,
     slides: slides.map(s => ({
       slideIndex: s.slideIndex,
       fileName: s.fileName,
       size: s.size,
-      url: `/api/asin-slide-image/${encodeURIComponent(asin)}/${s.slideIndex}`
+      url: `/api/asin-slide-image/${encodeURIComponent(asin)}/${s.slideIndex}${baseDir ? '?baseDir=' + encodeURIComponent(baseDir) : ''}`
     }))
   });
 });
@@ -834,12 +847,87 @@ app.get('/api/asin-slides/:asin', (req, res) => {
 // Route: Stream local A+ slide image
 app.get('/api/asin-slide-image/:asin/:slideNum', (req, res) => {
   const { asin, slideNum } = req.params;
-  const slides = getAplusSlideFilesForAsin(asin);
+  const { baseDir } = req.query;
+  const slides = getAplusSlideFilesForAsin(asin, baseDir);
   const target = slides.find(s => s.slideIndex === parseInt(slideNum, 10));
   if (target && fs.existsSync(target.fullPath)) {
     return res.sendFile(target.fullPath);
   }
   res.status(404).send('A+ slide image not found');
+});
+
+// Route: Scan & Verify A+ Graphics Root Directory
+app.post('/api/scan-assets-dir', (req, res) => {
+  const { dirPath } = req.body;
+  const homeDir = process.env.HOME || '/home/dave';
+  const targetPath = path.resolve(String(dirPath || process.env.APLUS_GRAPHICS_DIR || path.join(homeDir, 'A+ Premium')).trim());
+
+  if (!fs.existsSync(targetPath)) {
+    return res.json({
+      success: false,
+      exists: false,
+      path: targetPath,
+      message: `Folder '${targetPath}' does not exist on your computer yet. You can create it, add your ASIN folders inside, and re-scan anytime.`
+    });
+  }
+
+  try {
+    const stats = fs.statSync(targetPath);
+    if (!stats.isDirectory()) {
+      return res.json({
+        success: false,
+        exists: true,
+        path: targetPath,
+        message: `'${targetPath}' is a file, not a directory.`
+      });
+    }
+
+    const entries = fs.readdirSync(targetPath, { withFileTypes: true });
+    const subdirs = entries.filter(e => e.isDirectory()).map(e => e.name);
+
+    // Save to .env as APLUS_GRAPHICS_DIR
+    try {
+      const envPath = path.join(__dirname, '.env');
+      let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
+      const regex = new RegExp(`^APLUS_GRAPHICS_DIR=.*$`, 'm');
+      if (regex.test(envContent)) {
+        envContent = envContent.replace(regex, `APLUS_GRAPHICS_DIR="${targetPath}"`);
+      } else {
+        envContent += `\nAPLUS_GRAPHICS_DIR="${targetPath}"`;
+      }
+      fs.writeFileSync(envPath, envContent.trim() + '\n', { mode: 0o600 });
+      process.env.APLUS_GRAPHICS_DIR = targetPath;
+    } catch (_) {}
+
+    const results = [];
+    let readyCount = 0;
+
+    for (const sub of subdirs) {
+      const subPath = path.join(targetPath, sub);
+      try {
+        const subFiles = fs.readdirSync(subPath);
+        const slides = subFiles.filter(f => /^A\+?\s*[1-7]\.(jpe?g|png)$/i.test(f) || /^Slide[-_ ]?[1-7]\.(jpe?g|png)$/i.test(f));
+        if (slides.length > 0) readyCount++;
+        results.push({
+          asinOrFolder: sub,
+          slideCount: slides.length,
+          slides
+        });
+      } catch (_) {}
+    }
+
+    res.json({
+      success: true,
+      exists: true,
+      path: targetPath,
+      totalFolders: subdirs.length,
+      readyFolders: readyCount,
+      sampleFolders: results.slice(0, 15),
+      message: `✓ Verified: '${targetPath}' contains ${subdirs.length} folders (${readyCount} with valid A+ slide images).`
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // 6. Start Bulk Update Processing Job
@@ -851,6 +939,7 @@ app.post('/api/start-bulk-batch', async (req, res) => {
     tier = 'PREMIUM', 
     premiumType = 'PREMIUM_IMAGE_TEXT', 
     includeHeadline = false,
+    baseDir = null,
     options = {}, 
     credentials, 
     clientSlides 
@@ -955,7 +1044,7 @@ app.post('/api/start-bulk-batch', async (req, res) => {
 
       try {
         // Step A: Discover real local A+ banner graphics (A+1.jpg to A+7.jpg) in /home/dave/Desktop/{ASIN}
-        const localSlides = getAplusSlideFilesForAsin(item.asin);
+        const localSlides = getAplusSlideFilesForAsin(item.asin, baseDir);
         const hasClientSlides = clientSlides && Array.isArray(clientSlides) && clientSlides.length > 0;
         if (localSlides.length > 0) {
           currentBatchJob.logs.push(`[${new Date().toLocaleTimeString()}] 📁 Found ${localSlides.length} local A+ banners in ${localSlides[0].dir} (${localSlides.map(s => s.fileName).join(', ')})`);
@@ -1082,7 +1171,26 @@ app.post('/api/audit-asin', async (req, res) => {
   const item = listings.find(l => (l.asin || '').toUpperCase() === cleanAsin);
 
   try {
-    const publishRecords = await spapi.searchContentPublishRecords(cleanAsin);
+    let publishRecords = { publishRecordList: [] };
+    try {
+      publishRecords = await spapi.searchContentPublishRecords(cleanAsin);
+    } catch (auditErr) {
+      console.warn(`[Audit] Could not query Amazon SP-API for ${cleanAsin}: ${auditErr.message}`);
+      if (spapi.sandboxPublishedAsins && spapi.sandboxPublishedAsins.has(cleanAsin)) {
+        publishRecords = {
+          publishRecordList: [{
+            contentReferenceKey: `aplus_ref_${cleanAsin}`,
+            asin: cleanAsin,
+            marketplaceId: spapi.marketplaceId,
+            contentSubType: 'PREMIUM',
+            contentType: 'EBC'
+          }]
+        };
+      } else {
+        publishRecords = { publishRecordList: [] };
+      }
+    }
+
     const isLive = Boolean(publishRecords.publishRecordList && publishRecords.publishRecordList.length > 0);
 
     if (item) {
@@ -1090,6 +1198,8 @@ app.post('/api/audit-asin', async (req, res) => {
       if (isLive) {
         item.status = 'APPROVED';
         item.moderationErrors = [];
+      } else {
+        item.status = 'DRAFT';
       }
       item.auditTimestamp = new Date().toISOString();
       saveListings(listings);
@@ -1099,7 +1209,7 @@ app.post('/api/audit-asin', async (req, res) => {
       success: true,
       asin: cleanAsin,
       isLive,
-      status: item ? item.status : (isLive ? 'APPROVED' : 'DRAFT'),
+      status: isLive ? 'APPROVED' : 'DRAFT',
       marketplace: spapi.marketplaceId || 'A21TJRUUN4KGV',
       amazonUrl: `https://www.amazon.in/dp/${cleanAsin}`,
       publishRecords: publishRecords.publishRecordList || [],
