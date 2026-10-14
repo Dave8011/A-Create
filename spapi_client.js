@@ -1129,9 +1129,22 @@ class SpApiClient {
       });
     }
 
+    const cleanSku = (options.sku || '').trim();
+    const cleanAsin = (asin || '').trim();
+    let docName = '';
+    if (options.documentName) {
+      docName = options.documentName;
+    } else if (cleanSku && cleanAsin) {
+      docName = `${cleanSku}-${cleanAsin}-EBC`;
+    } else if (cleanAsin) {
+      docName = `${cleanAsin}-EBC`;
+    } else {
+      docName = `${name || 'Listing'}-EBC`;
+    }
+
     return {
       contentDocument: {
-        name: `${name || asin} - A+ ${tier === 'PREMIUM' ? 'Premium' : 'Enhanced Brand'} Content`.slice(0, 100),
+        name: docName.slice(0, 100),
         contentType: 'EBC',
         contentSubType: (tier === 'PREMIUM' ? null : 'STANDARD'),
         locale: targetLocale,

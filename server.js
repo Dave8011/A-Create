@@ -1001,7 +1001,8 @@ app.post('/api/start-bulk-batch', async (req, res) => {
         const docPayload = spapi.build7SlideContentDocument(item.title || item.asin, item.asin, slides, { 
           tier: activeTier, 
           premiumType: premiumType || 'PREMIUM_IMAGE_TEXT',
-          includeHeadline: Boolean(includeHeadline)
+          includeHeadline: Boolean(includeHeadline),
+          sku: item.sku
         });
 
         // Step 3d: Pre-flight Validation
